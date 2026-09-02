@@ -1,0 +1,38 @@
+{
+  "clips": [
+    {
+      "clip_id": "demo-001",
+      "filename": "demo-001.mp4",
+      "title": "Placeholder capsulorhexis clip",
+      "description": "Drop a real cataract surgery clip here named demo-001.mp4 to use this entry.",
+      "canonical": {
+        "step_label": "Capsulorhexis",
+        "step_window_sec": [0, 45],
+        "reference_answer": "The surgeon performs a continuous curvilinear capsulorhexis (CCC): after an initial nick in the anterior capsule with a cystotome or forceps, the tear is extended circumferentially in small controlled bites, regrasping close to the tear edge each time, aiming for a round, centered capsulorhexis roughly 5.0-5.5mm in diameter. Adequate anterior chamber depth (viscoelastic) and consistent, low, tangential tearing force are the key technical requirements; radial extension (a tear that runs outward toward the equator instead of curving back) is the primary failure mode to watch for.",
+        "known_pitfalls": [
+          "Radial 'runaway' extension toward the capsular equator",
+          "Small or off-center capsulorhexis restricting later steps",
+          "Loss of red reflex / poor visualization leading to tear tracking errors",
+          "Chamber shallowing mid-tear from viscoelastic dissipation"
+        ]
+      }
+    },
+    {
+      "clip_id": "demo-002",
+      "filename": "demo-002.mp4",
+      "title": "Placeholder phacoemulsification clip",
+      "description": "Drop a real cataract surgery clip here named demo-002.mp4 to use this entry.",
+      "canonical": {
+        "step_label": "Phacoemulsification",
+        "step_window_sec": [0, 90],
+        "reference_answer": "The surgeon sculpts and divides the lens nucleus (e.g. divide-and-conquer or chop technique) using ultrasound energy delivered through the phaco probe, then emulsifies and aspirates the fragments while a second instrument stabilizes/manipulates the nucleus. Key technical requirements: staying centered in the capsular bag and away from the posterior capsule and corneal endothelium, maintaining chamber stability, and using the minimum effective ultrasound energy/time. Common pitfalls include posterior capsule rupture from probe depth misjudgment, chasing mobile fragments outside the safe zone, and endothelial trauma from probe proximity to the cornea.",
+        "known_pitfalls": [
+          "Posterior capsule rupture",
+          "Chasing fragments toward the iris/angle",
+          "Excessive ultrasound time/energy",
+          "Corneal endothelial contact"
+        ]
+      }
+    }
+  ]
+}
