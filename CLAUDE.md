@@ -99,6 +99,12 @@ what was scoped as a nice-to-have but not yet built.
   separately via `OPENAI_MODEL`, `ANTHROPIC_MODEL`, `GOOGLE_MODEL`, `QWEN_MODEL` and the
   Qwen host via `QWEN_BASE_URL` (see `.env.example`) — this is deliberate, since frontier
   model version strings change frequently and shouldn't require code edits.
+- `app.py` calls `reload_env()` (`load_dotenv(.env, override=True)`) at startup **and on
+  every `/api/models` and `/api/query`**, so editing `.env` takes effect on the next
+  request without restarting uvicorn (`--reload` only watches `.py`). `.env` is
+  authoritative — a value there always wins over a pre-existing shell env var.
+- Every model gets sent JPEG frames, so `QWEN_MODEL` (and any provider's model) must be
+  a **vision** model — e.g. `qwen-vl-max` / `qwen3-vl-plus`, not a text-only `*-flash`.
 - Adding a provider = one `PROVIDERS` entry (+ a `_<provider>_generate` adapter, unless
   it speaks the OpenAI-compatible protocol, in which case reuse `_openai_generate` with
   a `base_url`); the UI dropdown and both query paths pick it up automatically. The UI

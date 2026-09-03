@@ -14,9 +14,16 @@ from pydantic import BaseModel
 from frames import extract_frames_b64, extract_frames_timed, video_duration
 from providers import available_models, query_model, query_steps
 
-load_dotenv(override=True)
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+
+
+def reload_env():
+    load_dotenv(ENV_PATH, override=True)
+
+
+reload_env()
+
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
@@ -80,6 +87,7 @@ def root():
 
 @app.get("/api/models")
 def api_models():
+    reload_env()
     return {"models": available_models()}
 
 
@@ -127,6 +135,7 @@ def api_session_video(session_id: str):
 def api_query(req: QueryRequest):
     """Single endpoint: given an uploaded clip, either answer a question about it
     (mode=chat) or return a structured surgical-step timeline (mode=steps)."""
+    reload_env()
     video_path = session_video_path(req.session_id)
     if not os.path.exists(video_path):
         return {"error": "no video uploaded for this session"}
