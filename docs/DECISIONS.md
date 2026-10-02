@@ -3,6 +3,33 @@
 Captures the choices made in the chat that produced this repo, and why, so they don't
 get silently relitigated by a future session.
 
+## 2026-10-02 — configurable agent loop with traces (`mode="agent"`)
+
+- **What:** a small generic engine (`core/`) plus per-modality packs (`modalities/video/`).
+  A loop calls the model with tools, runs the tool calls, feeds results back, and records
+  a trace. Agents are JSON config (prompt, tool whitelist, stop condition, iteration cap).
+- **Why config + registry:** "plug and play" = adding a tool, an agent, or a modality
+  never touches the engine. Configs can only reference registered tools (no arbitrary
+  code), and are validated on load with readable errors.
+- **Single endpoint preserved:** agent runs are a `mode` branch on `/api/query`. Legacy
+  `chat`/`steps` modes are unchanged (only the `models` default moved from `["gpt"]` to
+  `[]` so an agent's own `model` can apply; legacy modes still fall back to `gpt`).
+- **Trace stores refs, not bytes:** tool images become small refs (`{time_sec, zoom,...}`)
+  re-rendered by `GET /api/sessions/<id>/frame`, so session JSON stays small.
+- **Routing:** the modality is chosen by the session: video uploaded -> `video`, otherwise
+  the `text` fallback (free-form chat). Uploading mid-chat switches the session and the
+  earlier chat is replayed as memory.
+- **Follow-ups** are agent turns (`type: "followup"`, `parent_turn`) with prior Q&A
+  replayed as memory and the earlier analysis/marks available as tools.
+- **Live trace via polling:** agent runs execute in a background thread and the UI polls
+  `GET /api/runs/<id>?after=<seq>` (chosen over SSE: plain fetch, no connection state).
+  Runs are in-memory (1h TTL); the saved turn in the session file is the durable record.
+  Turns are saved under a per-session lock so a chat and an analysis can finish together.
+- **UI flow:** upload auto-starts the analysis agent; the single-call (no tools) options
+  were removed from the UI. The legacy `chat`/`steps` modes remain in the API only.
+- **Not verified live:** the OpenAI/Qwen, Anthropic and Gemini tool-calling adapters are
+  covered by translation/parsing tests against fake SDK clients, not by real API calls.
+
 ## 2026-08-31 — pivot from canonical scoring to upload + model-vs-reviewer steps
 
 The original design (curated demo clips, a hand-written `canonical` answer per clip,
