@@ -118,3 +118,19 @@ previously scored models against hand-written canonical answers).
   - `mode: "steps"` — also takes `step_hint?`; returns a turn with `model_steps` + `assessment`
 - `POST /api/mark` — `{session_id, step_label, start_sec, end_sec, note?}`
 - `GET /api/sessions/{session_id}` — full session transcript (`video`, `turns`, `marks`)
+- `POST /api/calls/mark` — `{call_id, verdict: "correct"|"incorrect"|"unsure"|null, note?}`;
+  the reviewer's verdict on one recorded call (`null` clears it)
+- `GET /api/sessions/{session_id}/trajectory` — every recorded call for the session
+
+## Evidence, confidence, uncertainty and trajectory
+
+Each step the analysis agent submits (`submit_steps`) carries `confidence` (0–1, required),
+`uncertainty` (text) and `evidence` (`[{time_sec, note}]`, required, may be empty); the tool
+rejects out-of-range values so the agent has to fix them. The step table shows confidence,
+uncertainty and evidence thumbnails that seek the player.
+
+Every saved turn is also flattened into `sessions/trajectory.db` (SQLite, table `calls`):
+one row per run, model call and tool call, linked by `parent_id`/`caller`, with args,
+result, latency and the reviewer's verdict. `call_id` is `<session>:<turn>:<trace seq>`
+(`:run` for the root). Trace tool calls get correct/incorrect/unsure buttons once the turn
+is saved. Export: `sqlite3 -header -csv sessions/trajectory.db "select * from calls"`.

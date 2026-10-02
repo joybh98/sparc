@@ -45,9 +45,16 @@ def steps_script(agent, messages, tools) -> LLMReply:
             tool_calls=[ToolCall("mock_submit", "submit_steps", {
                 "steps": [
                     {"step_label": "Capsulorhexis", "start_sec": 0.0, "end_sec": mid,
-                     "comment": "[MOCK] Tear looks continuous and roughly centered."},
+                     "comment": "[MOCK] Tear looks continuous and roughly centered.",
+                     "confidence": 0.7,
+                     "uncertainty": "[MOCK] Sparse frames; tear completion is not directly visible.",
+                     "evidence": [{"time_sec": 0.0, "note": "[MOCK] Cystotome at the anterior capsule."},
+                                  {"time_sec": mid, "note": "[MOCK] Circular edge of the tear."}]},
                     {"step_label": "Phacoemulsification", "start_sec": mid, "end_sec": dur,
-                     "comment": "[MOCK] Nucleus disassembly stays central."}],
+                     "comment": "[MOCK] Nucleus disassembly stays central.",
+                     "confidence": 0.5,
+                     "uncertainty": "[MOCK] The boundary with the previous step may be off by seconds.",
+                     "evidence": [{"time_sec": dur, "note": "[MOCK] Phaco tip engaged with the nucleus."}]}],
                 "assessment": "[MOCK] Two-step read from sampled frames; timings are rough."})])
 
     return _run_plan(plan, tools, messages, final)

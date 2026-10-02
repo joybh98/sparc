@@ -95,7 +95,7 @@ const VideoPanel = {
     $('assessmentBox').innerHTML = '';
     try {
       const turn = await runAgent(body, ev => setTrace($('stepsTrace'), ev, { open: true, live: true }));
-      setTrace($('stepsTrace'), turn.trace, { open: true });
+      setTrace($('stepsTrace'), turn.trace, { open: true, turnIndex: turn.turn_index });
       this.setHint(`${turn.model} · ${turn.provider} · ${turn.latency_ms}ms · ${turn.iterations} iteration(s)`
         + (turn.error ? ` · ${turn.error}` : ''), !!turn.error);
       this.modelSteps = (turn.model_steps || []).map(s => ({
@@ -103,6 +103,9 @@ const VideoPanel = {
         start_sec: Number(s.start_sec) || 0,
         end_sec: Number(s.end_sec) || 0,
         comment: s.comment || '',
+        confidence: typeof s.confidence === 'number' ? s.confidence : null,
+        uncertainty: s.uncertainty || '',
+        evidence: s.evidence || [],
       }));
       this.renderModelSteps(turn.assessment);
       this.renderComparison();
@@ -124,12 +127,18 @@ const VideoPanel = {
   renderModelSteps(assessment) {
     const box = $('modelStepsBox');
     box.innerHTML = !this.modelSteps.length ? '<small class="hint">No steps returned.</small>' : `<table>
-      <tr><th>Step</th><th>Start</th><th>End</th><th>Comment</th></tr>
+      <tr><th>Step</th><th>Start</th><th>End</th><th>Conf.</th><th>Comment / uncertainty</th><th>Evidence</th></tr>
       ${this.modelSteps.map(s => `<tr>
         <td>${esc(s.step_label)}</td>
         <td><a href="#" data-seek="${esc(s.start_sec)}">${fmt(s.start_sec)}</a></td>
         <td><a href="#" data-seek="${esc(s.end_sec)}">${fmt(s.end_sec)}</a></td>
-        <td>${esc(s.comment)}</td></tr>`).join('')}</table>`;
+        <td>${s.confidence === null ? '—'
+          : `<span class="conf ${s.confidence >= 0.75 ? 'high' : s.confidence >= 0.45 ? 'mid' : 'low'}">${Math.round(s.confidence * 100)}%</span>`}</td>
+        <td>${esc(s.comment)}${s.uncertainty ? `<div class="uncertainty">? ${esc(s.uncertainty)}</div>` : ''}</td>
+        <td>${s.evidence.length ? s.evidence.map(e => `<div class="ev">
+          <img loading="lazy" data-seek="${esc(e.time_sec)}" src="${esc(frameUrl({ time_sec: e.time_sec }, 120))}" title="click to seek the video" />
+          <span><a href="#" data-seek="${esc(e.time_sec)}">${fmt(e.time_sec)}</a><br><small class="hint">${esc(e.note)}</small></span></div>`).join('')
+          : '<small class="hint">none cited</small>'}</td></tr>`).join('')}</table>`;
     $('assessmentBox').innerHTML =
       assessment ? `<div class="assessment"><strong>Assessment:</strong> ${esc(assessment)}</div>` : '';
   },

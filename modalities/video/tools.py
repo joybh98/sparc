@@ -83,12 +83,24 @@ def zoom_frame(ctx, time_sec, zoom=2.0, center_x=0.5, center_y=0.5):
       "Deliver the final surgical step timeline. Call this once you are done examining "
       "the clip. Steps must be chronological and lie within the clip duration.",
       {"type": "object", "required": ["steps", "assessment"], "properties": {
-          "steps": {"type": "array", "description": "Ordered steps; each an object with "
-                    "step_label (str), start_sec (number), end_sec (number), comment (str).",
+          "steps": {"type": "array", "description": "Ordered steps. Besides the label, "
+                    "times and comment, each carries your calibrated confidence, what is "
+                    "uncertain, and the frames you relied on.",
                     "items": {"type": "object", "properties": {
                         "step_label": {"type": "string"}, "start_sec": {"type": "number"},
-                        "end_sec": {"type": "number"}, "comment": {"type": "string"}},
-                        "required": ["step_label", "start_sec", "end_sec"]}},
+                        "end_sec": {"type": "number"}, "comment": {"type": "string"},
+                        "confidence": {"type": "number", "description":
+                                       "Probability 0-1 that this label and time range are right."},
+                        "uncertainty": {"type": "string", "description":
+                                        "What is unclear, or what would resolve it. Empty if nothing."},
+                        "evidence": {"type": "array", "description":
+                                     "Frames that support this step.", "items": {
+                                         "type": "object", "required": ["time_sec", "note"],
+                                         "properties": {"time_sec": {"type": "number"},
+                                                        "note": {"type": "string", "description":
+                                                                 "What is visible there."}}}}},
+                        "required": ["step_label", "start_sec", "end_sec", "confidence",
+                                     "evidence"]}},
           "assessment": {"type": "string", "description": "Brief overall read of the clip."}}})
 def submit_steps(ctx, steps, assessment):
     duration = _duration(ctx)
@@ -108,11 +120,27 @@ def submit_steps(ctx, steps, assessment):
         if a < prev_start:
             problems.append(f"step {i} starts before the previous step")
         prev_start = a
+        conf = s.get("confidence")
+        if not isinstance(conf, (int, float)) or isinstance(conf, bool) or not 0 <= conf <= 1:
+            problems.append(f"step {i} needs a confidence between 0 and 1")
+        ev = s.get("evidence")
+        if not isinstance(ev, list):
+            problems.append(f"step {i} needs an evidence list (may be empty)")
+        else:
+            for e in ev:
+                t = e.get("time_sec") if isinstance(e, dict) else None
+                if not isinstance(t, (int, float)) or isinstance(t, bool) \
+                        or not 0 <= t <= duration + 0.01:
+                    problems.append(f"step {i} evidence needs time_sec within [0, {duration}]")
+                    break
     if not steps:
         problems.append("steps is empty")
     if problems:
         return ToolResult(text="Rejected: " + "; ".join(problems) + ". Fix and call again.",
                           is_error=True)
+    steps = [{**s, "uncertainty": str(s.get("uncertainty") or ""),
+              "evidence": [{"time_sec": e["time_sec"], "note": str(e.get("note") or "")}
+                           for e in s["evidence"]]} for s in steps]
     return ToolResult(text=f"Submitted {len(steps)} steps.",
                       data={"steps": steps, "assessment": assessment},
                       ui={"steps": steps})

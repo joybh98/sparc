@@ -68,6 +68,18 @@
   .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .thumb { text-align: center; font-size: 10px; color: #666; }
   .thumb img { display: block; height: 72px; border-radius: 4px; border: 1px solid #ccd; cursor: pointer; background: #000; }
+  .conf { font-weight: 600; }
+  .conf.high { color: #1c6b3a; }
+  .conf.mid { color: #8a5a00; }
+  .conf.low { color: #b03a2e; }
+  .uncertainty { color: #8a5a00; font-size: 11px; margin-top: 3px; }
+  .ev { display: flex; gap: 6px; align-items: flex-start; margin-bottom: 4px; }
+  .ev img { width: 60px; border-radius: 4px; cursor: pointer; background: #000; }
+  .verdicts { margin-top: 6px; display: flex; gap: 4px; align-items: center; }
+  button.verdict { background: #eef0f4; color: #14213d; padding: 1px 8px; font-size: 11px; border-radius: 10px; }
+  button.verdict.active.correct { background: #1c6b3a; color: #fff; }
+  button.verdict.active.incorrect { background: #b03a2e; color: #fff; }
+  button.verdict.active.unsure { background: #8a5a00; color: #fff; }
   .seek { background: #e6ecff; color: #2b4a9b; border-radius: 10px; padding: 0 8px; font-size: 11px; cursor: pointer; border: none; margin-left: 6px; }
   .note { color: #8a5a00; font-size: 11px; margin: 4px 0; }
   .spin { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border: 2px solid #c9d3ee; border-top-color: #14213d; border-radius: 50%; animation: spin .8s linear infinite; }

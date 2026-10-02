@@ -142,3 +142,17 @@ part of the frame sequence they rely on, not structurally enforced), confidence 
 (via prompt, not structured output), clarifying-question capability, verdict-based
 gold-label path, scorecard endpoint, session logging/replay, model routing abstraction
 via `providers.py`. **Not implemented** — see `docs/NEXT_STEPS.md`.
+
+
+## 2026-10-02 — step evidence/confidence/uncertainty + queryable trajectory with per-call marks
+
+- **Step schema** gains required `confidence`, `evidence` (`[{time_sec, note}]`) and optional
+  `uncertainty`, enforced in `submit_steps` validation (bad values are returned to the agent
+  as an error so it retries) rather than only in the prompt. Evidence is time-based, matching
+  the timestamped frames and `sample_frames`/`zoom_frame`.
+- **Trajectory** keeps the full trace in the session JSON and adds a flat SQLite copy
+  (`core/trajectory.py`, `sessions/trajectory.db`) written after each turn: run -> model_call
+  -> tool, so "which call invoked what" and the reviewer's per-call verdict are queryable.
+  Marking is `POST /api/calls/mark`; it calls no model, so the single query endpoint stands.
+- **Not done:** evidence/confidence for follow-up answers (free text), and verdicts on a
+  step's confidence or evidence individually (marks are per tool call).

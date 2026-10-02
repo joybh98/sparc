@@ -72,7 +72,7 @@ class ChatPanel {
       <div class="meta">${badges} ${esc(turn.provider)}</div>
       ${turn.error ? `<div class="error">Error: ${esc(turn.error)}</div>` : ''}
       ${turn.answer ? `<div class="answer">${esc(turn.answer)}</div>` : ''}
-      <div data-trace>${renderTrace(turn.trace)}</div>
+      <div data-trace>${renderTrace(turn.trace, { turnIndex: turn.turn_index })}</div>
     </div>`;
   }
 

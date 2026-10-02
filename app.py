@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from core import registry
 from core.loop import run_agent
 from core.tools import ToolContext, get_tools
+from core.trajectory import (VERDICTS, get_trajectory, mark_call, record_turn)
 from frames import (extract_frame_at, extract_frames_b64, extract_frames_timed,
                     video_duration)
 from providers import available_models, query_model, query_steps
@@ -64,6 +65,16 @@ class MarkRequest(BaseModel):
     start_sec: float
     end_sec: float
     note: Optional[str] = None
+
+
+class CallMarkRequest(BaseModel):
+    call_id: str
+    verdict: Optional[str] = None
+    note: Optional[str] = None
+
+
+def trajectory_db() -> str:
+    return os.path.join(SESSIONS_DIR, "trajectory.db")
 
 
 def session_path(session_id: str) -> str:
@@ -281,6 +292,7 @@ def execute_agent_run(prep: Dict, on_event=None) -> Dict:
                                         if t.get("type") == "steps"), None)
         session["turns"].append(turn)
         save_session(session)
+    record_turn(trajectory_db(), ctx.session_id, turn["turn_index"], turn)
     return turn
 
 
@@ -387,6 +399,21 @@ def api_mark(req: MarkRequest):
     })
     save_session(session)
     return {"ok": True, "marks": session["marks"]}
+
+
+@app.post("/api/calls/mark")
+def api_mark_call(req: CallMarkRequest):
+    """Reviewer's verdict on one recorded call (verdict null clears it)."""
+    if req.verdict is not None and req.verdict not in VERDICTS:
+        return {"error": f"verdict must be one of {sorted(VERDICTS)} or null"}
+    if not mark_call(trajectory_db(), req.call_id, req.verdict, req.note):
+        return {"error": "unknown call_id"}
+    return {"ok": True}
+
+
+@app.get("/api/sessions/{session_id}/trajectory")
+def api_trajectory(session_id: str):
+    return {"session_id": session_id, "calls": get_trajectory(trajectory_db(), session_id)}
 
 
 @app.get("/api/sessions/{session_id}")

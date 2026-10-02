@@ -16,6 +16,7 @@ function newId() {
 const App = {
   sessionId: newId(),
   modalities: [],
+  verdicts: {},     // call_id -> reviewer verdict, for calls marked this page load
   modality(name) { return this.modalities.find(m => m.name === name); },
 };
 
@@ -60,7 +61,15 @@ function frameUrl(ref, w) {
   return `/api/sessions/${App.sessionId}/frame?${q}`;
 }
 
-function renderTool(call, result, live) {
+const VERDICTS = ['correct', 'incorrect', 'unsure'];
+
+function markButtons(callId) {
+  const cur = App.verdicts[callId];
+  return `<div class="verdicts" data-call="${esc(callId)}"><span class="hint">your call:</span>
+    ${VERDICTS.map(v => `<button class="verdict ${v}${cur === v ? ' active' : ''}" data-verdict="${v}">${v}</button>`).join('')}</div>`;
+}
+
+function renderTool(call, result, live, markId) {
   const argStr = JSON.stringify(call.args || {});
   const shortArgs = argStr.length > 160 ? argStr.slice(0, 160) + '…' : argStr;
   const seek = result && result.ui && result.ui.seek_to != null
@@ -79,10 +88,12 @@ function renderTool(call, result, live) {
     <div class="args" title="${esc(argStr)}">${esc(shortArgs)}</div>
     ${result && result.text ? `<div class="result">${esc(result.text)}</div>` : ''}
     ${thumbs}
+    ${markId && result ? markButtons(markId) : ''}
   </div>`;
 }
 
-// opts: {open: bool, live: bool}. `live` = the run is still going (partial trace).
+// opts: {open: bool, live: bool, turnIndex: int}. `live` = the run is still going (partial
+// trace). `turnIndex` (set once the turn is saved) turns on per-call marking.
 function renderTrace(trace, opts = {}) {
   trace = trace || [];
   const iters = new Map();   // iteration -> {model, calls: [{call, result}], notes: []}
@@ -115,7 +126,8 @@ function renderTrace(trace, opts = {}) {
     return `<div class="iter">
       <div class="iter-head">Iteration ${n}${m ? ` · model ${m.latency_ms}ms${tokens}` : ''}</div>
       ${m && m.text ? `<div class="think">${esc(m.text)}</div>` : ''}
-      ${it.calls.map(c => renderTool(c.call, c.result, live)).join('')}
+      ${it.calls.map(c => renderTool(c.call, c.result, live,
+        opts.turnIndex != null && c.call.seq != null ? `${App.sessionId}:${opts.turnIndex}:${c.call.seq}` : null)).join('')}
       ${it.notes.map(t => `<div class="note">${esc(t)}</div>`).join('')}
     </div>`;
   }).join('');
@@ -133,6 +145,19 @@ function setTrace(host, trace, opts = {}) {
   const prev = host.querySelector('details.trace');
   host.innerHTML = renderTrace(trace, { ...opts, open: prev ? prev.open : opts.open });
 }
+
+// reviewer verdict on one call; clicking the active verdict clears it
+document.addEventListener('click', async e => {
+  const btn = e.target.closest('button.verdict');
+  if (!btn) return;
+  const host = btn.closest('.verdicts');
+  const id = host.dataset.call;
+  const verdict = App.verdicts[id] === btn.dataset.verdict ? null : btn.dataset.verdict;
+  const r = await postJSON('/api/calls/mark', { call_id: id, verdict });
+  if (r.error) return alert(r.error);
+  if (verdict) App.verdicts[id] = verdict; else delete App.verdicts[id];
+  host.querySelectorAll('button.verdict').forEach(b => b.classList.toggle('active', b.dataset.verdict === verdict));
+});
 
 // any [data-seek] element inside a trace or step table seeks the player
 document.addEventListener('click', e => {
