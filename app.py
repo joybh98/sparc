@@ -13,6 +13,8 @@ from pydantic import BaseModel
 
 from frames import extract_frames_b64, extract_frames_timed, video_duration
 from providers import available_models, query_model, query_steps
+from trajectory import (VERDICTS, get_trajectory, mark_call, new_trace, persist_trace,
+                        traced_call)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
@@ -50,6 +52,12 @@ class MarkRequest(BaseModel):
     step_label: str
     start_sec: float
     end_sec: float
+    note: Optional[str] = None
+
+
+class CallMarkRequest(BaseModel):
+    call_id: str
+    verdict: str
     note: Optional[str] = None
 
 
@@ -141,45 +149,78 @@ def api_query(req: QueryRequest):
         return {"error": "no video uploaded for this session"}
 
     session = load_session(req.session_id)
+    turn_index = len(session["turns"])
+    trace = new_trace(req.session_id, req.mode)
 
-    if req.mode == "steps":
-        frames_timed = extract_frames_timed(video_path, req.n_frames)
-        result = query_steps(req.models[0], frames_timed, req.step_hint,
-                              req.conversation_history)
-        turn = {
-            "turn_index": len(session["turns"]),
-            "type": "steps",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "n_frames_sent": len(frames_timed),
-            "model": result["model"],
-            "provider": result["provider"],
-            "latency_ms": result["latency_ms"],
-            "model_steps": result["steps"],
-            "assessment": result["assessment"],
-            "error": result["error"],
-        }
-        session["turns"].append(turn)
-        save_session(session)
-        return {"session_id": req.session_id, "turn": turn}
+    with traced_call(trace, "query",
+                     inputs={"mode": req.mode, "models": req.models, "n_frames": req.n_frames,
+                             "question": req.question or None,
+                             "step_hint": req.step_hint}) as root:
+        if req.mode == "steps":
+            with traced_call(trace, "extract_frames", root,
+                             {"n_frames": req.n_frames, "timed": True}) as frames_call:
+                frames_timed = extract_frames_timed(video_path, req.n_frames)
+                frames_call["outputs"] = {
+                    "n_frames": len(frames_timed),
+                    "times_sec": [f["time_sec"] for f in frames_timed],
+                }
+            result = query_steps(req.models[0], frames_timed, req.step_hint,
+                                  req.conversation_history, trace=trace, parent=root)
+            root["error"] = result["error"]
+            root["outputs"] = {"n_steps": len(result["steps"])}
+            turn = {
+                "turn_index": turn_index,
+                "type": "steps",
+                "trace_id": trace["trace_id"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "n_frames_sent": len(frames_timed),
+                "model": result["model"],
+                "provider": result["provider"],
+                "latency_ms": result["latency_ms"],
+                "model_steps": result["steps"],
+                "assessment": result["assessment"],
+                "error": result["error"],
+            }
+        else:
+            with traced_call(trace, "extract_frames", root,
+                             {"n_frames": req.n_frames, "timed": False}) as frames_call:
+                frames_b64 = extract_frames_b64(video_path, req.n_frames)
+                frames_call["outputs"] = {"n_frames": len(frames_b64)}
+            results = []
+            for model_key in req.models:
+                resp = query_model(model_key, req.question, frames_b64,
+                                   req.conversation_history, trace=trace, parent=root)
+                results.append(resp.to_dict())
+            root["outputs"] = {"n_responses": len(results)}
+            turn = {
+                "turn_index": turn_index,
+                "type": "chat",
+                "trace_id": trace["trace_id"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "question": req.question,
+                "n_frames_sent": len(frames_b64),
+                "responses": results,
+            }
 
-    frames_b64 = extract_frames_b64(video_path, req.n_frames)
-    results = []
-    for model_key in req.models:
-        resp = query_model(model_key, req.question, frames_b64, req.conversation_history)
-        results.append(resp.to_dict())
-
-    turn = {
-        "turn_index": len(session["turns"]),
-        "type": "chat",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "question": req.question,
-        "n_frames_sent": len(frames_b64),
-        "responses": results,
-    }
     session["turns"].append(turn)
     save_session(session)
+    persist_trace(trace, turn_index)
 
-    return {"session_id": req.session_id, "turn": turn}
+    return {"session_id": req.session_id, "turn": turn, "trajectory": trace["calls"]}
+
+
+@app.post("/api/calls/mark")
+def api_mark_call(req: CallMarkRequest):
+    if req.verdict not in VERDICTS:
+        return {"error": f"verdict must be one of {sorted(VERDICTS)}"}
+    if not mark_call(req.call_id, req.verdict, req.note):
+        return {"error": "unknown call_id"}
+    return {"ok": True}
+
+
+@app.get("/api/sessions/{session_id}/trajectory")
+def api_trajectory(session_id: str):
+    return {"session_id": session_id, "calls": get_trajectory(session_id)}
 
 
 @app.post("/api/mark")

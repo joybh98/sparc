@@ -35,6 +35,18 @@
   small.hint { color: #888; }
   .row { display: flex; gap: 6px; }
   .row > * { flex: 1; }
+  .conf { font-weight: 600; }
+  .conf.high { color: #1c6b3a; }
+  .conf.mid { color: #8a5a00; }
+  .conf.low { color: #b03a2e; }
+  .ev-link { cursor: pointer; color: #2b4a9b; text-decoration: underline; }
+  .uncertainty { color: #8a5a00; font-size: 11px; margin-top: 3px; }
+  .call-row td { font-size: 11px; }
+  .call-detail { background: #f6f7f9; border-radius: 6px; padding: 6px 8px; font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }
+  .verdict-btn { padding: 2px 8px; font-size: 11px; margin-right: 3px; }
+  .verdict-btn.active.correct { background: #1c6b3a; color: #fff; }
+  .verdict-btn.active.incorrect { background: #b03a2e; color: #fff; }
+  .verdict-btn.active.unsure { background: #8a5a00; color: #fff; }
 </style>
 </head>
 <body>
@@ -83,6 +95,11 @@
     </div>
 
     <div class="panel">
+      <h3>Trajectory <small class="hint">(every call behind the latest turn — mark each one)</small></h3>
+      <div id="trajectoryBox"><small class="hint">Run "Analyze steps" or ask a question to see the calls.</small></div>
+    </div>
+
+    <div class="panel">
       <h3>4. Model steps vs. your steps</h3>
       <div id="comparisonBox"><small class="hint">Run "Analyze steps" and add at least one mark to compare.</small></div>
     </div>
@@ -106,6 +123,21 @@ let durationSec = 0;
 let modelSteps = [];
 let userMarks = [];
 let conversationHistory = [];
+let trajectoryCalls = [];
+
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function confClass(c) {
+  return c >= 0.75 ? 'high' : c >= 0.45 ? 'mid' : 'low';
+}
+
+function seekTo(sec) {
+  const video = document.getElementById('clipVideo');
+  video.currentTime = Number(sec) || 0;
+}
 
 function fmt(s) {
   s = Number(s) || 0;
@@ -187,9 +219,13 @@ async function analyzeSteps() {
     start_sec: Number(s.start_sec) || 0,
     end_sec: Number(s.end_sec) || 0,
     comment: s.comment || '',
+    confidence: typeof s.confidence === 'number' ? s.confidence : null,
+    uncertainty: s.uncertainty || '',
+    evidence: s.evidence || [],
   }));
   renderModelSteps(turn.assessment);
   renderComparison();
+  setTrajectory(data.trajectory);
 }
 
 function renderModelSteps(assessment) {
@@ -197,14 +233,67 @@ function renderModelSteps(assessment) {
   if (!modelSteps.length) { box.innerHTML = '<small class="hint">No steps returned.</small>'; }
   else {
     box.innerHTML = `<table>
-      <tr><th>Step</th><th>Start</th><th>End</th><th>Comment</th></tr>
+      <tr><th>Step</th><th>Start</th><th>End</th><th>Conf.</th><th>Comment / uncertainty</th><th>Evidence</th></tr>
       ${modelSteps.map(s => `<tr>
-        <td>${s.step_label}</td><td>${fmt(s.start_sec)}</td><td>${fmt(s.end_sec)}</td><td>${s.comment}</td>
+        <td>${esc(s.step_label)}</td><td>${fmt(s.start_sec)}</td><td>${fmt(s.end_sec)}</td>
+        <td>${s.confidence === null ? '—' :
+          `<span class="conf ${confClass(s.confidence)}">${(s.confidence * 100).toFixed(0)}%</span>`}</td>
+        <td>${esc(s.comment)}${s.uncertainty ? `<div class="uncertainty">? ${esc(s.uncertainty)}</div>` : ''}</td>
+        <td>${s.evidence.length ? s.evidence.map(e =>
+          `<div><span class="ev-link" onclick="seekTo(${Number(e.time_sec) || 0})">frame ${esc(e.frame)} @ ${fmt(e.time_sec)}</span>
+           <small class="hint">${esc(e.note)}</small></div>`).join('') : '<small class="hint">none cited</small>'}</td>
       </tr>`).join('')}
     </table>`;
   }
   document.getElementById('assessmentBox').innerHTML =
-    assessment ? `<div class="assessment"><strong>Assessment:</strong> ${assessment}</div>` : '';
+    assessment ? `<div class="assessment"><strong>Assessment:</strong> ${esc(assessment)}</div>` : '';
+}
+
+function setTrajectory(calls) {
+  trajectoryCalls = calls || [];
+  renderTrajectory();
+}
+
+function renderTrajectory() {
+  const box = document.getElementById('trajectoryBox');
+  if (!trajectoryCalls.length) {
+    box.innerHTML = '<small class="hint">Run "Analyze steps" or ask a question to see the calls.</small>';
+    return;
+  }
+  const depth = c => {
+    let d = 0, cur = c;
+    while (cur && cur.parent_id) { cur = trajectoryCalls.find(x => x.call_id === cur.parent_id); d++; }
+    return d;
+  };
+  box.innerHTML = `<table>
+    <tr><th>#</th><th>Call</th><th>Called by</th><th>ms</th><th>Details</th><th>Your mark</th></tr>
+    ${trajectoryCalls.map((c, i) => `<tr class="call-row">
+      <td>${i + 1}</td>
+      <td style="padding-left:${8 + depth(c) * 14}px"><strong>${esc(c.name)}</strong></td>
+      <td>${esc(c.caller)}</td>
+      <td>${c.latency_ms}</td>
+      <td>${c.error ? `<span style="color:#c0392b">${esc(c.error)}</span>` : ''}
+        <details><summary>in / out</summary>
+          <div class="call-detail">in: ${esc(JSON.stringify(c.inputs, null, 1))}\nout: ${esc(JSON.stringify(c.outputs, null, 1))}</div>
+        </details></td>
+      <td>${['correct', 'incorrect', 'unsure'].map(v =>
+        `<button class="secondary verdict-btn ${v} ${c.reviewer_verdict === v ? 'active' : ''}"
+          onclick="markCall('${c.call_id}', '${v}')">${v}</button>`).join('')}</td>
+    </tr>`).join('')}
+  </table>`;
+}
+
+async function markCall(callId, verdict) {
+  const res = await fetch('/api/calls/mark', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ call_id: callId, verdict }),
+  });
+  const data = await res.json();
+  if (data.error) return alert(data.error);
+  const call = trajectoryCalls.find(c => c.call_id === callId);
+  if (call) call.reviewer_verdict = verdict;
+  renderTrajectory();
 }
 
 async function submitMark() {
@@ -309,6 +398,7 @@ async function sendQuery() {
     if (!r.error) conversationHistory.push({ role: 'assistant', content: `[${r.model}] ${r.text}` });
   });
 
+  setTrajectory(data.trajectory);
   document.getElementById('turnHistory').innerHTML +=
     `<div class="turn"><strong>Q${turn.turn_index}:</strong> ${question}</div>`;
   document.getElementById('question').value = '';

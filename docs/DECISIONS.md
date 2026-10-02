@@ -115,3 +115,16 @@ part of the frame sequence they rely on, not structurally enforced), confidence 
 (via prompt, not structured output), clarifying-question capability, verdict-based
 gold-label path, scorecard endpoint, session logging/replay, model routing abstraction
 via `providers.py`. **Not implemented** — see `docs/NEXT_STEPS.md`.
+
+
+## 2026-10-02 — evidence/confidence/uncertainty per step + call trajectory in SQLite
+
+- **Step schema** gains `confidence` (0–1), `uncertainty` (text) and `evidence`
+  (`[{frame, note}]`, normalized server-side to drop out-of-range frames and add
+  `time_sec`). Enforced via the prompt and `_normalize_steps`, not provider JSON schemas.
+- **Trajectory** is stored in SQLite (`sessions/trajectory.db`) rather than session JSON:
+  one row per call with `parent_id`/`caller`, so "which call invoked what" is queryable and
+  the reviewer's per-call verdict is an in-place update. Session turns keep only `trace_id`,
+  so the session JSON format stays stable. CSV export is a one-line `sqlite3` command.
+- **Marking** a call is `POST /api/calls/mark`; it does not call a model, so the
+  single-model-endpoint rule is unaffected.

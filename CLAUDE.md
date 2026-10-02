@@ -32,7 +32,8 @@ or real surgical footage.
 
 - `app.py` — FastAPI backend. `POST /api/upload` stores an uploaded clip at
   `sessions/<id>/video.mp4`; `POST /api/query` is the single model-calling endpoint with
-  `mode: "chat" | "steps"`; `POST /api/mark` records a reviewer step; `GET
+  `mode: "chat" | "steps"`; `POST /api/mark` records a reviewer step; `POST /api/calls/mark` records a verdict on one
+  traced call; `GET /api/sessions/<id>/trajectory` lists them; `GET
   /api/sessions/<id>` / `GET /api/sessions/<id>/video` read them back
 - `providers.py` — model router. `PROVIDERS` maps a model key (`gpt`/`claude`/`gemini`/
   `qwen`) to `{provider, key_env, model_env, default_model, generate, base_url?,
@@ -42,6 +43,11 @@ or real surgical footage.
   `query_model()` (chat) and `query_steps()` (structured step timeline, JSON) share that
   path and each fall back to a clearly-labeled mock when the selected model's key env
   var is unset. `available_models()` reports the keys + whether each has a key set
+- `trajectory.py` — SQLite trajectory store (`sessions/trajectory.db`, `calls` table).
+  `traced_call(trace, name, parent, inputs)` context manager records each internal call
+  (name, caller via `parent`, latency, inputs/outputs, error); `persist_trace()` writes a
+  request's calls; `mark_call()` stores the reviewer's verdict. `/api/query` opens a
+  `query` root call and passes `trace`/`parent` into `query_steps`/`query_model`
 - `frames.py` — samples N evenly-spaced frames from a local video via OpenCV:
   `extract_frames_b64()` (base64 JPEGs) for chat, `extract_frames_timed()` (+ timestamps)
   and `video_duration()` for step analysis
@@ -84,6 +90,9 @@ what was scoped as a nice-to-have but not yet built.
 - **Sessions are the gold-label seed.** Every turn (chat or steps) and mark gets logged
   to `sessions/<id>.json`. Keep this format append-friendly and stable — it's meant to
   be reusable as training/eval data later, per the broader project's gold-label problem.
+- **Every call is traced.** New internal steps in the query path should be wrapped in
+  `traced_call(...)` with the calling call as `parent`, so the trajectory stays complete.
+  Step outputs carry `confidence`, `uncertainty` and validated `evidence`.
 - **No code comments**, per the user's standing preference — write self-explanatory code
   instead.
 

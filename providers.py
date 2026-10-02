@@ -5,6 +5,8 @@ import random
 import time
 from typing import Dict, List, Optional
 
+from trajectory import traced_call
+
 
 SYSTEM_PROMPT = (
     "You are assisting an expert reviewer in evaluating a cataract surgery video clip. "
@@ -23,10 +25,16 @@ STEP_SYSTEM_PROMPT = (
     "timestamp in seconds, plus the clip's total duration. Segment the clip into the "
     "ordered surgical steps you can identify. Respond with a single JSON object of the "
     "form {\"steps\": [{\"step_label\": str, \"start_sec\": number, \"end_sec\": number, "
-    "\"comment\": str}], \"assessment\": str}. Every start_sec and end_sec must lie "
-    "within [0, duration] and steps must be in chronological order. 'comment' is a short "
-    "note on technique or quality for that step. 'assessment' is a brief overall read of "
-    "the clip. Base timing estimates on the frame timestamps. Return only the JSON."
+    "\"comment\": str, \"confidence\": number, \"uncertainty\": str, \"evidence\": "
+    "[{\"frame\": int, \"note\": str}]}], \"assessment\": str}. Every start_sec and end_sec "
+    "must lie within [0, duration] and steps must be in chronological order. 'comment' is a "
+    "short note on technique or quality for that step. 'confidence' is your calibrated "
+    "probability in [0, 1] that this step label and its time range are correct. "
+    "'uncertainty' states what is unclear or what additional information would resolve it "
+    "(empty string if nothing). 'evidence' lists the frames you relied on: 'frame' is the "
+    "1-based frame number exactly as listed in the frame timestamps, and 'note' says what "
+    "is visible in that frame that supports the step. 'assessment' is a brief overall read "
+    "of the clip. Base timing estimates on the frame timestamps. Return only the JSON."
 )
 
 
@@ -82,6 +90,7 @@ def _mock_call(question: str, n_frames: int) -> str:
 def _mock_steps(frames_timed: List[Dict], step_hint: Optional[str]) -> Dict:
     time.sleep(0.3 + random.random() * 0.4)
     duration = frames_timed[-1]["time_sec"] if frames_timed else 30.0
+    n = len(frames_timed)
     mid = round(duration * 0.45, 2)
     hint = f" (reviewer expected: {step_hint})" if step_hint else ""
     return {
@@ -91,16 +100,57 @@ def _mock_steps(frames_timed: List[Dict], step_hint: Optional[str]) -> Dict:
                 "start_sec": 0.0,
                 "end_sec": mid,
                 "comment": f"[MOCK] Tear looks continuous and roughly centered{hint}.",
+                "confidence": 0.7,
+                "uncertainty": "[MOCK] Sparse frames; tear completion point is not directly visible.",
+                "evidence": [
+                    {"frame": 1, "note": "[MOCK] Cystotome visible at the anterior capsule."},
+                    {"frame": max(1, n // 2), "note": "[MOCK] Circular edge of the tear."},
+                ],
             },
             {
                 "step_label": "Phacoemulsification",
                 "start_sec": mid,
                 "end_sec": duration,
                 "comment": "[MOCK] Nucleus disassembly stays central; no obvious posterior capsule contact.",
+                "confidence": 0.5,
+                "uncertainty": "[MOCK] Boundary with the previous step could be off by several seconds.",
+                "evidence": [
+                    {"frame": max(1, n), "note": "[MOCK] Phaco tip engaged with the nucleus."},
+                ],
             },
         ],
         "assessment": "[MOCK] Two-step read from sparse frames; timings are rough estimates only.",
     }
+
+
+def _normalize_steps(steps, frames_timed: List[Dict]) -> List[Dict]:
+    n = len(frames_timed)
+    out = []
+    for step in steps or []:
+        if not isinstance(step, dict):
+            continue
+        evidence = []
+        for e in step.get("evidence") or []:
+            if not isinstance(e, dict):
+                continue
+            try:
+                frame = int(e.get("frame"))
+            except (TypeError, ValueError):
+                continue
+            if 1 <= frame <= n:
+                evidence.append({
+                    "frame": frame,
+                    "time_sec": frames_timed[frame - 1]["time_sec"],
+                    "note": str(e.get("note") or ""),
+                })
+        try:
+            confidence = max(0.0, min(1.0, float(step.get("confidence"))))
+        except (TypeError, ValueError):
+            confidence = None
+        out.append({**step, "confidence": confidence,
+                    "uncertainty": str(step.get("uncertainty") or ""),
+                    "evidence": evidence})
+    return out
 
 
 def _openai_generate(system, prompt, images_b64, history, model_name, want_json,
@@ -211,7 +261,8 @@ def _resolve(model_key: str):
 
 
 def query_model(model_key: str, question: str, frames_b64: List[str],
-                 conversation_history: List[Dict]) -> ModelResponse:
+                 conversation_history: List[Dict], trace: Optional[Dict] = None,
+                 parent: Optional[Dict] = None) -> ModelResponse:
     start = time.time()
 
     if model_key not in PROVIDERS:
@@ -220,14 +271,19 @@ def query_model(model_key: str, question: str, frames_b64: List[str],
     p, model_name, api_key, base_url = _resolve(model_key)
 
     try:
-        if not api_key:
-            text = _mock_call(question, len(frames_b64))
-            provider_label = f"{p['provider']} (mock — no {p['key_env']} set)"
-        else:
-            text = p["generate"](SYSTEM_PROMPT, f"Question: {question}", frames_b64,
-                                  conversation_history, model_name, False,
-                                  api_key=api_key, base_url=base_url)
-            provider_label = p["provider"]
+        with traced_call(trace, "model_generate", parent,
+                         {"model": model_name, "provider": p["provider"],
+                          "n_images": len(frames_b64), "mock": not api_key,
+                          "question": question}) as gen:
+            if not api_key:
+                text = _mock_call(question, len(frames_b64))
+                provider_label = f"{p['provider']} (mock — no {p['key_env']} set)"
+            else:
+                text = p["generate"](SYSTEM_PROMPT, f"Question: {question}", frames_b64,
+                                      conversation_history, model_name, False,
+                                      api_key=api_key, base_url=base_url)
+                provider_label = p["provider"]
+            gen["outputs"] = {"raw_text": text}
         return ModelResponse(model_name, provider_label, text, int((time.time() - start) * 1000))
     except Exception as e:
         return ModelResponse(model_name, p["provider"], "", int((time.time() - start) * 1000),
@@ -235,7 +291,8 @@ def query_model(model_key: str, question: str, frames_b64: List[str],
 
 
 def query_steps(model_key: str, frames_timed: List[Dict], step_hint: Optional[str],
-                 conversation_history: List[Dict]) -> Dict:
+                 conversation_history: List[Dict], trace: Optional[Dict] = None,
+                 parent: Optional[Dict] = None) -> Dict:
     start = time.time()
 
     base = {"steps": [], "assessment": "", "model": model_key, "provider": "unknown",
@@ -250,20 +307,32 @@ def query_steps(model_key: str, frames_timed: List[Dict], step_hint: Optional[st
     base["provider"] = p["provider"]
 
     try:
-        if not api_key:
-            result = _mock_steps(frames_timed, step_hint)
-            base["provider"] = f"{p['provider']} (mock — no {p['key_env']} set)"
-        else:
-            prompt = _frame_timing_text(frames_timed)
-            if step_hint:
-                prompt += f"\n\nReviewer expects this clip to contain: {step_hint}"
-            images = [f["b64"] for f in frames_timed]
-            raw = p["generate"](STEP_SYSTEM_PROMPT, prompt, images, conversation_history,
-                                 model_name, True, api_key=api_key, base_url=base_url)
+        with traced_call(trace, "model_generate", parent,
+                         {"model": model_name, "provider": p["provider"],
+                          "n_images": len(frames_timed), "mock": not api_key,
+                          "step_hint": step_hint}) as gen:
+            if not api_key:
+                raw = json.dumps(_mock_steps(frames_timed, step_hint))
+                base["provider"] = f"{p['provider']} (mock — no {p['key_env']} set)"
+            else:
+                prompt = _frame_timing_text(frames_timed)
+                if step_hint:
+                    prompt += f"\n\nReviewer expects this clip to contain: {step_hint}"
+                images = [f["b64"] for f in frames_timed]
+                raw = p["generate"](STEP_SYSTEM_PROMPT, prompt, images, conversation_history,
+                                     model_name, True, api_key=api_key, base_url=base_url)
+            gen["outputs"] = {"raw_text": raw}
+
+        with traced_call(trace, "parse_steps", parent, {"n_frames": len(frames_timed)}) as parse:
             result = json.loads(raw)
-            base["provider"] = p["provider"]
-        base["steps"] = result.get("steps", [])
-        base["assessment"] = result.get("assessment", "")
+            base["steps"] = _normalize_steps(result.get("steps", []), frames_timed)
+            base["assessment"] = result.get("assessment", "")
+            parse["outputs"] = {
+                "n_steps": len(base["steps"]),
+                "steps": [{"step_label": s.get("step_label"),
+                           "confidence": s["confidence"],
+                           "n_evidence": len(s["evidence"])} for s in base["steps"]],
+            }
     except json.JSONDecodeError as e:
         base["error"] = f"model did not return valid JSON: {e}"
     except Exception as e:

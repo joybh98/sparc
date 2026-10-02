@@ -80,3 +80,19 @@ previously scored models against hand-written canonical answers).
   - `mode: "steps"` — also takes `step_hint?`; returns a turn with `model_steps` + `assessment`
 - `POST /api/mark` — `{session_id, step_label, start_sec, end_sec, note?}`
 - `GET /api/sessions/{session_id}` — full session transcript (`video`, `turns`, `marks`)
+- `POST /api/calls/mark` — `{call_id, verdict: "correct"|"incorrect"|"unsure", note?}`; the
+  reviewer's verdict on one recorded call
+- `GET /api/sessions/{session_id}/trajectory` — every recorded call for the session
+
+## Evidence, confidence, uncertainty and trajectory
+
+Each model step carries `confidence` (0–1), `uncertainty` (free text) and `evidence`
+(`[{frame, time_sec, note}]`, validated against the frames actually sent; clicking a
+citation in the UI seeks the player to that frame).
+
+Every `/api/query` call is traced. Each internal call (`query` → `extract_frames`,
+`model_generate`, `parse_steps`) is a row in the `calls` table of
+`sessions/trajectory.db` (SQLite) with `parent_id`/`caller`, timing, inputs, outputs
+(including the raw model text), errors, and the reviewer's verdict. Each session turn
+stores the `trace_id` that links it to its calls. Export with e.g.
+`sqlite3 -header -csv sessions/trajectory.db "select * from calls" > calls.csv`.
