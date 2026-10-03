@@ -8,3 +8,4 @@ sessions/*/
 sample_clips/*.mp4
 !sample_clips/metadata.json
 !sessions/.gitkeep
+sessions/*.db

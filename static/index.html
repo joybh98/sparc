@@ -4,12 +4,15 @@
 <meta charset="utf-8" />
 <title>SPARC Frontier-Model Eval</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root { color-scheme: light; }   /* the palette below is light-only */
   body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; background: #f6f7f9; color: #1a1a1a; }
-  header { background: #14213d; color: #fff; padding: 14px 20px; }
+  header { background: #14213d; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
   header h1 { margin: 0; font-size: 18px; }
   header p { margin: 4px 0 0; font-size: 12px; color: #aeb8d0; }
+  header label { font-size: 12px; color: #aeb8d0; display: block; margin-bottom: 3px; }
+  header select { min-width: 260px; }
   .layout { display: grid; grid-template-columns: 360px 1fr; gap: 16px; padding: 16px; }
+  .single { max-width: 900px; margin: 0 auto; padding: 16px; }
   .panel { background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 16px; }
   .panel h3 { margin: 0 0 10px; font-size: 14px; }
   select, textarea, input[type=text] { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #d0d3da; border-radius: 6px; font-size: 13px; }
@@ -26,293 +29,81 @@
   .tag.model-only { background: #e6ecff; color: #2b4a9b; }
   .tag.you-only { background: #f3e3f7; color: #7a2f8f; }
   .response-card { border: 1px solid #e2e4e9; border-radius: 8px; padding: 10px; font-size: 13px; margin-top: 10px; }
-  .response-card h4 { margin: 0 0 6px; font-size: 13px; }
   .response-card .meta { color: #888; font-size: 11px; margin-bottom: 6px; }
-  .response-card .error { color: #c0392b; }
+  .response-card .q { font-weight: 600; margin-bottom: 6px; }
+  .response-card .answer { white-space: pre-wrap; }
+  .error { color: #c0392b; }
   .assessment { background: #fff8e8; border: 1px solid #f0dca0; border-radius: 8px; padding: 8px 10px; font-size: 12px; margin-top: 8px; }
   .mark-row { display: flex; justify-content: space-between; gap: 6px; padding: 4px 0; border-bottom: 1px solid #eee; font-size: 12px; }
-  .turn { border-top: 1px dashed #ddd; padding-top: 8px; margin-top: 8px; font-size: 12px; }
   small.hint { color: #888; }
+  small.hint.error { color: #c0392b; }
   .row { display: flex; gap: 6px; }
   .row > * { flex: 1; }
+  .agent-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .agent-bar label { font-size: 12px; color: #666; white-space: nowrap; }
+  .agent-bar select { flex: 1; }
+  details.cfg { margin-bottom: 8px; font-size: 12px; }
+  details.cfg summary { cursor: pointer; color: #555; }
+  details.cfg textarea { font-family: ui-monospace, Menlo, monospace; font-size: 11px; margin-top: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .chip { background: #eef0f4; color: #14213d; border-radius: 12px; padding: 3px 10px; font-size: 12px; cursor: pointer; border: none; }
+  .send-row { margin-top: 8px; display: flex; gap: 8px; align-items: center; }
+  .status-line { min-height: 16px; margin-bottom: 4px; }
+  .badge { display: inline-block; background: #eef0f4; color: #444; border-radius: 4px; padding: 0 6px; font-size: 11px; margin-right: 4px; }
+  .badge.warn { background: #fdf0d5; color: #8a5a00; }
+  .badge.err { background: #fbe3e0; color: #a02c20; }
+
+  /* trace panel */
+  details.trace { margin-top: 8px; border: 1px solid #e2e4e9; border-radius: 8px; font-size: 12px; background: #fafbfc; }
+  details.trace > summary { cursor: pointer; padding: 6px 10px; color: #333; font-weight: 600; }
+  .trace-body { padding: 4px 10px 10px; }
+  .iter { border-left: 3px solid #c9d3ee; padding: 2px 0 2px 10px; margin: 8px 0; }
+  .iter-head { color: #666; font-size: 11px; }
+  .think { margin: 3px 0; color: #333; white-space: pre-wrap; }
+  .tool { margin: 6px 0; padding: 6px 8px; background: #fff; border: 1px solid #e6e8ee; border-radius: 6px; }
+  .tool.is-error { border-color: #efb9b2; background: #fff6f5; }
+  .tool .name { font-family: ui-monospace, Menlo, monospace; font-weight: 600; color: #14213d; }
+  .tool .args { font-family: ui-monospace, Menlo, monospace; color: #666; font-size: 11px; word-break: break-all; }
+  .tool .result { margin-top: 4px; white-space: pre-wrap; color: #333; }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .thumb { text-align: center; font-size: 10px; color: #666; }
+  .thumb img { display: block; height: 72px; border-radius: 4px; border: 1px solid #ccd; cursor: pointer; background: #000; }
+  .conf { font-weight: 600; }
+  .conf.high { color: #1c6b3a; }
+  .conf.mid { color: #8a5a00; }
+  .conf.low { color: #b03a2e; }
+  .uncertainty { color: #8a5a00; font-size: 11px; margin-top: 3px; }
+  .ev { display: flex; gap: 6px; align-items: flex-start; margin-bottom: 4px; }
+  .ev img { width: 60px; border-radius: 4px; cursor: pointer; background: #000; }
+  .verdicts { margin-top: 6px; display: flex; gap: 4px; align-items: center; }
+  button.verdict { background: #eef0f4; color: #14213d; padding: 1px 8px; font-size: 11px; border-radius: 10px; }
+  button.verdict.active.correct { background: #1c6b3a; color: #fff; }
+  button.verdict.active.incorrect { background: #b03a2e; color: #fff; }
+  button.verdict.active.unsure { background: #8a5a00; color: #fff; }
+  .seek { background: #e6ecff; color: #2b4a9b; border-radius: 10px; padding: 0 8px; font-size: 11px; cursor: pointer; border: none; margin-left: 6px; }
+  .note { color: #8a5a00; font-size: 11px; margin: 4px 0; }
+  .spin { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border: 2px solid #c9d3ee; border-top-color: #14213d; border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
 <header>
-  <h1>SPARC — Frontier model vs. your review (barebones)</h1>
-  <p>Upload a clip, get the model's step timeline, mark your own steps, compare, and ask follow-up questions.</p>
+  <div>
+    <h1>SPARC — Frontier model vs. your review (barebones)</h1>
+    <p>Chat with a model, or upload a clip: an agent analyzes it automatically, then you can talk to it and mark your own steps.</p>
+  </div>
+  <div>
+    <label for="modelSelect">Model</label>
+    <select id="modelSelect"></select>
+  </div>
 </header>
 
-<div class="layout">
-  <div>
-    <div class="panel">
-      <h3>1. Upload a clip</h3>
-      <input type="file" id="videoFile" accept="video/*" />
-      <button style="margin-top:8px;" onclick="uploadVideo()">Upload</button>
-      <small class="hint" id="uploadHint" style="display:block;margin-top:6px;"></small>
-      <video id="clipVideo" controls></video>
-      <label style="display:block;margin-top:10px;font-size:12px;color:#666;">Model (used for both "Analyze steps" and Q&amp;A)</label>
-      <select id="modelSelect" style="margin-top:4px;"></select>
-    </div>
+<main id="root"></main>
 
-    <div class="panel">
-      <h3>3. Mark your own steps</h3>
-      <input id="markLabel" type="text" placeholder="step label (e.g. Capsulorhexis)" />
-      <div class="row" style="margin-top:6px;">
-        <input id="markStart" type="text" placeholder="start sec" />
-        <input id="markEnd" type="text" placeholder="end sec" />
-      </div>
-      <div class="row" style="margin-top:6px;">
-        <button class="secondary" data-req-video onclick="fillFromPlayhead('markStart')">◀ start from playhead</button>
-        <button class="secondary" data-req-video onclick="fillFromPlayhead('markEnd')">◀ end from playhead</button>
-      </div>
-      <input id="markNote" type="text" placeholder="optional note" style="margin-top:6px;" />
-      <button class="secondary" style="margin-top:8px;" data-req-video onclick="submitMark()">Add mark</button>
-      <div id="marksList" style="margin-top:10px;"></div>
-    </div>
-  </div>
-
-  <div>
-    <div class="panel">
-      <h3>2. Model's read</h3>
-      <input id="stepHint" type="text" placeholder="optional: what you expect to see in this clip" />
-      <button style="margin-top:8px;" data-req-video onclick="analyzeSteps()">Analyze steps</button>
-      <small class="hint" id="stepsHint" style="margin-left:8px;"></small>
-      <div id="modelStepsBox"></div>
-      <div id="assessmentBox"></div>
-    </div>
-
-    <div class="panel">
-      <h3>4. Model steps vs. your steps</h3>
-      <div id="comparisonBox"><small class="hint">Run "Analyze steps" and add at least one mark to compare.</small></div>
-    </div>
-
-    <div class="panel">
-      <h3>Ask about the video</h3>
-      <textarea id="question" rows="3" placeholder="e.g. Was the capsulorhexis tear controlled throughout, or is there a radial extension risk?"></textarea>
-      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-        <button data-req-video onclick="sendQuery()">Send message</button>
-        <small class="hint" id="sessionHint"></small>
-      </div>
-      <div id="responseGrid"></div>
-      <div id="turnHistory" style="margin-top:10px;"></div>
-    </div>
-  </div>
-</div>
-
-<script>
-let sessionId = null;
-let durationSec = 0;
-let modelSteps = [];
-let userMarks = [];
-let conversationHistory = [];
-
-function fmt(s) {
-  s = Number(s) || 0;
-  const m = Math.floor(s / 60);
-  const r = (s % 60).toFixed(1);
-  return `${m}:${r.padStart(4, '0')}`;
-}
-
-function setVideoControlsEnabled(on) {
-  document.querySelectorAll('[data-req-video]').forEach(b => b.disabled = !on);
-}
-setVideoControlsEnabled(false);
-
-function selectedModel() {
-  return document.getElementById('modelSelect').value || 'gpt';
-}
-
-async function loadModels() {
-  const res = await fetch('/api/models');
-  const data = await res.json();
-  const sel = document.getElementById('modelSelect');
-  sel.innerHTML = data.models.map(m =>
-    `<option value="${m.key}">${m.key} · ${m.model_name}${m.has_key ? '' : ' (mock — no key)'}</option>`
-  ).join('');
-  const live = data.models.find(m => m.has_key);
-  if (live) sel.value = live.key;
-}
-loadModels();
-
-async function uploadVideo() {
-  const input = document.getElementById('videoFile');
-  if (!input.files.length) return alert('choose a video file first');
-  const fd = new FormData();
-  fd.append('file', input.files[0]);
-  if (sessionId) fd.append('session_id', sessionId);
-
-  document.getElementById('uploadHint').textContent = 'uploading…';
-  const res = await fetch('/api/upload', { method: 'POST', body: fd });
-  const data = await res.json();
-  if (data.error) { document.getElementById('uploadHint').textContent = data.error; return; }
-
-  sessionId = data.session_id;
-  durationSec = data.duration_sec || 0;
-  const video = document.getElementById('clipVideo');
-  video.src = data.video_url + '?t=' + Date.now();
-  document.getElementById('uploadHint').textContent =
-    `session ${sessionId.slice(0, 8)} · ${durationSec}s`;
-  document.getElementById('sessionHint').textContent = `session: ${sessionId.slice(0, 8)}`;
-  setVideoControlsEnabled(true);
-}
-
-function fillFromPlayhead(id) {
-  const video = document.getElementById('clipVideo');
-  document.getElementById(id).value = video.currentTime.toFixed(1);
-}
-
-async function analyzeSteps() {
-  if (!sessionId) return;
-  document.getElementById('stepsHint').textContent = 'analyzing…';
-  const res = await fetch('/api/query', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      session_id: sessionId,
-      mode: 'steps',
-      step_hint: document.getElementById('stepHint').value.trim() || null,
-      models: [selectedModel()],
-      conversation_history: conversationHistory,
-    }),
-  });
-  const data = await res.json();
-  if (data.error) { document.getElementById('stepsHint').textContent = data.error; return; }
-
-  const turn = data.turn;
-  document.getElementById('stepsHint').textContent =
-    `${turn.model} · ${turn.latency_ms}ms` + (turn.error ? ` · ${turn.error}` : '');
-  modelSteps = (turn.model_steps || []).map(s => ({
-    step_label: s.step_label || '(unlabeled)',
-    start_sec: Number(s.start_sec) || 0,
-    end_sec: Number(s.end_sec) || 0,
-    comment: s.comment || '',
-  }));
-  renderModelSteps(turn.assessment);
-  renderComparison();
-}
-
-function renderModelSteps(assessment) {
-  const box = document.getElementById('modelStepsBox');
-  if (!modelSteps.length) { box.innerHTML = '<small class="hint">No steps returned.</small>'; }
-  else {
-    box.innerHTML = `<table>
-      <tr><th>Step</th><th>Start</th><th>End</th><th>Comment</th></tr>
-      ${modelSteps.map(s => `<tr>
-        <td>${s.step_label}</td><td>${fmt(s.start_sec)}</td><td>${fmt(s.end_sec)}</td><td>${s.comment}</td>
-      </tr>`).join('')}
-    </table>`;
-  }
-  document.getElementById('assessmentBox').innerHTML =
-    assessment ? `<div class="assessment"><strong>Assessment:</strong> ${assessment}</div>` : '';
-}
-
-async function submitMark() {
-  if (!sessionId) return;
-  const step_label = document.getElementById('markLabel').value.trim();
-  const start_sec = parseFloat(document.getElementById('markStart').value);
-  const end_sec = parseFloat(document.getElementById('markEnd').value);
-  const note = document.getElementById('markNote').value.trim();
-  if (!step_label || isNaN(start_sec) || isNaN(end_sec)) return alert('fill in label, start, end');
-
-  const res = await fetch('/api/mark', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, step_label, start_sec, end_sec, note }),
-  });
-  const data = await res.json();
-  userMarks = data.marks || [];
-  renderMarks();
-  renderComparison();
-  document.getElementById('markLabel').value = '';
-  document.getElementById('markNote').value = '';
-}
-
-function renderMarks() {
-  document.getElementById('marksList').innerHTML = userMarks.map(m =>
-    `<div class="mark-row"><span>${m.step_label}</span><span>${fmt(m.start_sec)}–${fmt(m.end_sec)}</span></div>`
-  ).join('');
-}
-
-function iou(a, b) {
-  const inter = Math.max(0, Math.min(a.end_sec, b.end_sec) - Math.max(a.start_sec, b.start_sec));
-  const union = (a.end_sec - a.start_sec) + (b.end_sec - b.start_sec) - inter;
-  return union > 0 ? inter / union : 0;
-}
-
-function renderComparison() {
-  const box = document.getElementById('comparisonBox');
-  if (!modelSteps.length || !userMarks.length) {
-    box.innerHTML = '<small class="hint">Run "Analyze steps" and add at least one mark to compare.</small>';
-    return;
-  }
-
-  const usedMarks = new Set();
-  const rows = modelSteps.map(ms => {
-    let best = -1, bestScore = 0;
-    userMarks.forEach((um, i) => {
-      const s = iou(ms, um);
-      if (s > bestScore) { bestScore = s; best = i; }
-    });
-    let verdict = 'model-only', um = null;
-    if (best >= 0 && bestScore > 0) {
-      um = userMarks[best];
-      usedMarks.add(best);
-      verdict = bestScore >= 0.5 ? 'match' : 'partial';
-    }
-    return { ms, um, bestScore, verdict };
-  });
-
-  userMarks.forEach((um, i) => {
-    if (!usedMarks.has(i)) rows.push({ ms: null, um, bestScore: 0, verdict: 'you-only' });
-  });
-
-  box.innerHTML = `<table>
-    <tr><th>Model step</th><th>Your step</th><th>Overlap (IoU)</th><th>Verdict</th></tr>
-    ${rows.map(r => `<tr>
-      <td>${r.ms ? `${r.ms.step_label}<br><small class="hint">${fmt(r.ms.start_sec)}–${fmt(r.ms.end_sec)}</small>` : '—'}</td>
-      <td>${r.um ? `${r.um.step_label}<br><small class="hint">${fmt(r.um.start_sec)}–${fmt(r.um.end_sec)}</small>` : '—'}</td>
-      <td>${(r.bestScore * 100).toFixed(0)}%</td>
-      <td><span class="tag ${r.verdict}">${r.verdict.replace('-', ' ')}</span></td>
-    </tr>`).join('')}
-  </table>`;
-}
-
-async function sendQuery() {
-  const question = document.getElementById('question').value.trim();
-  if (!question || !sessionId) return;
-
-  const res = await fetch('/api/query', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      session_id: sessionId,
-      mode: 'chat',
-      question,
-      models: [selectedModel()],
-      conversation_history: conversationHistory,
-    }),
-  });
-  const data = await res.json();
-  if (data.error) return alert(data.error);
-
-  const turn = data.turn;
-  conversationHistory.push({ role: 'user', content: question });
-  document.getElementById('responseGrid').innerHTML = turn.responses.map(r => `
-    <div class="response-card">
-      <h4>${r.model} <span style="font-weight:normal;font-size:11px;color:#888;">${r.latency_ms}ms</span></h4>
-      <div class="meta">${r.provider}</div>
-      ${r.error ? `<div class="error">Error: ${r.error}</div>` : `<div>${r.text}</div>`}
-    </div>
-  `).join('');
-  turn.responses.forEach(r => {
-    if (!r.error) conversationHistory.push({ role: 'assistant', content: `[${r.model}] ${r.text}` });
-  });
-
-  document.getElementById('turnHistory').innerHTML +=
-    `<div class="turn"><strong>Q${turn.turn_index}:</strong> ${question}</div>`;
-  document.getElementById('question').value = '';
-}
-</script>
+<script src="/static/common.js"></script>
+<script src="/static/chat_panel.js"></script>
+<script src="/static/text_panel.js"></script>
+<script src="/static/video_panel.js"></script>
+<script src="/static/main.js"></script>
 </body>
 </html>
