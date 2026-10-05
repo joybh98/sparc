@@ -87,6 +87,8 @@
   button.verdict.active.unsure { background: #8a5a00; color: #fff; }
   .seek { background: #e6ecff; color: #2b4a9b; border-radius: 10px; padding: 0 8px; font-size: 11px; cursor: pointer; border: none; margin-left: 6px; }
   .note { color: #8a5a00; font-size: 11px; margin: 4px 0; }
+  .trace-status { display: flex; align-items: center; margin-top: 8px; font-size: 13px; color: #333; }
+  header .dev { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; cursor: pointer; }
   .spin { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border: 2px solid #c9d3ee; border-top-color: #14213d; border-radius: 50%; animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
@@ -100,6 +102,7 @@
   <div>
     <label for="modelSelect">Model</label>
     <select id="modelSelect"></select>
+    <label class="dev" title="Open the agent's full reasoning trace by default"><input type="checkbox" id="devView" /> Developer view: expand reasoning</label>
   </div>
 </header>
 

@@ -96,8 +96,8 @@ const VideoPanel = {
     $('modelStepsBox').innerHTML = '';
     $('assessmentBox').innerHTML = '';
     try {
-      const turn = await runAgent(body, ev => setTrace($('stepsTrace'), ev, { open: true, live: true }));
-      setTrace($('stepsTrace'), turn.trace, { open: true, turnIndex: turn.turn_index });
+      const turn = await runAgent(body, ev => setTrace($('stepsTrace'), ev, { live: true }));
+      setTrace($('stepsTrace'), turn.trace, { turnIndex: turn.turn_index });
       this.setHint(`${turn.model} · ${turn.provider} · ${turn.latency_ms}ms · ${turn.iterations} iteration(s)`
         + (turn.error ? ` · ${turn.error}` : ''), !!turn.error);
       this.modelSteps = (turn.model_steps || []).map(s => ({

@@ -16,6 +16,9 @@ function newId() {
 const App = {
   sessionId: newId(),
   modalities: [],
+  // "Developer view" opens every reasoning trace by default. Clinicians get them collapsed.
+  get devView() { try { return localStorage.getItem('sparc.devView') === '1'; } catch (e) { return false; } },
+  set devView(on) { try { localStorage.setItem('sparc.devView', on ? '1' : '0'); } catch (e) { /* private mode */ } },
   verdicts: {},     // call_id -> reviewer verdict, for calls marked this page load
   modality(name) { return this.modalities.find(m => m.name === name); },
 };
@@ -125,8 +128,41 @@ function renderTool(call, result, live, markId) {
   </div>`;
 }
 
+const roundSec = x => Math.round(Number(x) || 0);
+
+// What the agent is doing, in words a clinician can read. Keyed by tool name; a tool
+// without an entry falls back to a generic line.
+const TOOL_STATUS = {
+  get_clip_info: () => 'Checking the clip details…',
+  sample_frames: a => `Looking at frames ${roundSec(a.start_sec)}–${roundSec(a.end_sec)}s…`,
+  zoom_frame: a => `Zooming in on the frame at ${roundSec(a.time_sec)}s…`,
+  submit_steps: () => 'Writing up the step timeline…',
+  submit_answer: () => 'Writing up the answer…',
+  get_prior_analysis: () => 'Re-reading the earlier analysis…',
+  get_reviewer_marks: () => 'Checking your marked steps…',
+  ask_user: () => 'Preparing a question for you…',
+  search_history: () => 'Searching the conversation…',
+  calculate: () => 'Calculating…',
+};
+
+// One short line describing the latest thing the agent did, from the events so far.
+function statusFor(trace) {
+  const last = (trace || []).filter(e => e.type !== 'final').pop();
+  if (!last) return 'Starting…';
+  if (last.type === 'tool_call') {
+    const f = TOOL_STATUS[last.name];
+    return f ? f(last.args || {}) : `Using ${last.name}…`;
+  }
+  if (last.type === 'nudge') return 'Finishing up…';
+  if (last.type === 'error') return 'Something went wrong…';
+  if (last.type === 'model_call' && !last.n_tool_calls) return 'Writing up the result…';
+  return 'Thinking…';
+}
+
 // opts: {open: bool, live: bool, turnIndex: int}. `live` = the run is still going (partial
-// trace). `turnIndex` (set once the turn is saved) turns on per-call marking.
+// trace). `turnIndex` (set once the turn is saved) turns on per-call marking. The trace is
+// collapsed unless `open` is set or the developer view is on; while live, a one-line status
+// shows instead.
 function renderTrace(trace, opts = {}) {
   trace = trace || [];
   const iters = new Map();   // iteration -> {model, calls: [{call, result}], notes: []}
@@ -149,8 +185,8 @@ function renderTrace(trace, opts = {}) {
   const nCalls = trace.filter(e => e.type === 'tool_call').length;
   const failed = final && final.error;
   const summary = live
-    ? `Trace · ${nCalls} tool call(s) so far · running…`
-    : `Trace · ${final ? final.iterations : iters.size} iteration(s) · ${nCalls} tool call(s)`
+    ? `Inspect reasoning · ${nCalls} tool call(s) so far`
+    : `Inspect reasoning · ${final ? final.iterations : iters.size} iteration(s) · ${nCalls} tool call(s)`
       + (final ? ` · ${(final.latency_ms / 1000).toFixed(1)}s · stop: ${final.stop_reason}` : '');
 
   const body = [...iters.entries()].map(([n, it]) => {
@@ -165,9 +201,10 @@ function renderTrace(trace, opts = {}) {
     </div>`;
   }).join('');
 
-  const open = opts.open || failed;
-  return `<details class="trace"${open ? ' open' : ''}>
-    <summary>${live ? '<span class="spin"></span>' : ''}${esc(summary)}${failed ? ` <span class="badge err">${esc(failed)}</span>` : ''}</summary>
+  const open = opts.open != null ? opts.open : App.devView;
+  const status = live ? `<div class="trace-status"><span class="spin"></span>${esc(statusFor(trace))}</div>` : '';
+  return `${status}<details class="trace"${open ? ' open' : ''}>
+    <summary>${esc(summary)}${failed ? ` <span class="badge err">${esc(failed)}</span>` : ''}</summary>
     <div class="trace-body">${body || '<small class="hint">Waiting for the model…</small>'}
       ${live ? '<div class="note">⏳ working…</div>' : ''}</div>
   </details>`;
@@ -175,8 +212,14 @@ function renderTrace(trace, opts = {}) {
 
 // Re-render a trace into a container, keeping whatever open/closed state the user chose.
 function setTrace(host, trace, opts = {}) {
+  host.innerHTML = renderTrace(trace, { ...opts, open: traceOpen(host, opts.open) });
+}
+
+// Whether the trace in `host` is open right now (undefined if it has none yet), so a
+// re-render, or a card rebuilt from the saved turn, keeps the reviewer's choice.
+function traceOpen(host, fallback) {
   const prev = host.querySelector('details.trace');
-  host.innerHTML = renderTrace(trace, { ...opts, open: prev ? prev.open : opts.open });
+  return prev ? prev.open : fallback;
 }
 
 // reviewer verdict on one call; clicking the active verdict clears it

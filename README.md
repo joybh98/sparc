@@ -89,7 +89,7 @@ load in this order, and each owns one concern:
 | File | Role |
 | --- | --- |
 | `index.html` | Page shell and CSS: a header with the model selector, and an empty `<main id="root">` that the panels fill. |
-| `common.js` | Shared helpers (`$`, `esc`, `fmt`, `postJSON`), `linkify()` (timestamps in text become seek links), `confHTML()` and `evidenceHTML()` (confidence and evidence thumbnails, used by both the step table and chat answers), the global `App` state (session id, modalities, call verdicts), the **trace renderer**, the per-call **mark buttons**, the **agent picker**, and `runAgent()`, the streaming run client. Knows nothing about a specific modality. |
+| `common.js` | Shared helpers (`$`, `esc`, `fmt`, `postJSON`), `linkify()` (timestamps in text become seek links), `confHTML()` and `evidenceHTML()` (confidence and evidence thumbnails, used by both the step table and chat answers), the global `App` state (session id, modalities, call verdicts), the **trace renderer** (collapsed by default, with a live status line via `statusFor()`), the per-call **mark buttons**, the **agent picker**, and `runAgent()`, the streaming run client. Knows nothing about a specific modality. |
 | `chat_panel.js` | `ChatPanel`: the chat thread, question box, agent picker, suggestion chips, and the player-position bar (`setPlayer()`). The same panel is reused in both text and video sessions. |
 | `text_panel.js` | `TextPanel`: the screen before upload: an upload box above the chat. |
 | `video_panel.js` | `VideoPanel`: the screen after upload (layout below). |
@@ -131,10 +131,19 @@ load in this order, and each owns one concern:
 Interactions worth knowing:
 
 - Any frame thumbnail or evidence entry is clickable and **seeks the player**.
-- The trace is collapsible. It shows each model call, each tool call with its arguments,
-  result and latency, and thumbnails of the frames the agent fetched.
-- **Mark buttons appear on a trace once the turn is saved**, not while it is still
-  running. Clicking the active verdict clears it.
+- **The reasoning trace is hidden by default.** While the agent works you see one plain
+  line instead ("Looking at frames 220–280s…", "Zooming in on the frame at 41s…", "Writing
+  up the step timeline…"). When it finishes there is just an **Inspect reasoning**
+  toggle. Open it to see each model call, each tool call with its arguments, result and
+  latency, and thumbnails of the frames the agent fetched. Your open/closed choice survives
+  the live updates.
+- **Developer view:** tick "Developer view: expand reasoning" in the header to open every
+  trace by default. It is remembered in the browser (localStorage) and off by default.
+  Status wording lives in `TOOL_STATUS` in `common.js`; a new tool needs one line there
+  (otherwise it shows "Using <tool>…").
+- **Mark buttons live inside the trace**, so open "Inspect reasoning" to use them. They
+  appear once the turn is saved, not while it is still running. Clicking the active
+  verdict clears it.
 - **Re-run analysis** takes an optional hint ("what you expect to see") and an agent
   picker. Editing the agent's JSON there runs the edited config inline.
 - Chat is blocked while an analysis is running.

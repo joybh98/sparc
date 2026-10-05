@@ -89,7 +89,7 @@ class ChatPanel {
     this.statusEl.textContent = on ? why : '';
   }
 
-  card(turn) {
+  card(turn, traceOpen) {
     const badges = [
       `<span class="badge">${esc(turn.agent)}</span>`,
       `<span class="badge">${esc(turn.model)}</span>`,
@@ -107,7 +107,7 @@ class ChatPanel {
       ${turn.answer ? `<div class="answer">${linkify(turn.answer)}</div>` : ''}
       ${turn.uncertainty ? `<div class="uncertainty">? ${linkify(turn.uncertainty)}</div>` : ''}
       ${(turn.evidence || []).length ? `<div class="evidence">${evidenceHTML(turn.evidence)}</div>` : ''}
-      <div data-trace>${renderTrace(turn.trace, { turnIndex: turn.turn_index })}</div>
+      <div data-trace>${renderTrace(turn.trace, { turnIndex: turn.turn_index, open: traceOpen })}</div>
     </div>`;
   }
 
@@ -132,8 +132,8 @@ class ChatPanel {
     this.sendBtn.disabled = true;
 
     try {
-      const turn = await runAgent(body, ev => setTrace(traceHost, ev, { open: true, live: true }));
-      cardEl.outerHTML = this.card(turn);
+      const turn = await runAgent(body, ev => setTrace(traceHost, ev, { live: true }));
+      cardEl.outerHTML = this.card(turn, traceOpen(traceHost));
     } catch (err) {
       cardEl.querySelector('.meta').innerHTML = `<span class="badge err">failed</span>`;
       cardEl.insertAdjacentHTML('beforeend', `<div class="error">${esc(err.message)}</div>`);

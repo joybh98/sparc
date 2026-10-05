@@ -177,3 +177,21 @@ via `providers.py`. **Not implemented** — see `docs/NEXT_STEPS.md`.
   when nothing is cited), joined to `calls` through the delivering call. Chosen over leaving
   evidence only inside JSON columns so "evidence behind calls I marked incorrect" is a plain
   join. Reviewer clicks and scrubs are deliberately not logged.
+
+
+## 2026-10-06 — reasoning trace hidden by default, plain-language status while running
+
+- **Front end only.** The server still records the full trace and the trajectory store is
+  unchanged; this is about what clinicians see first. Nothing is dropped.
+- **Collapsed behind "Inspect reasoning"**, with a one-line status while the run is live
+  (`statusFor()` / `TOOL_STATUS` in `common.js`, e.g. "Looking at frames 220–280s…"). The
+  status is derived client-side from the latest trace event, so it needs no new endpoint or
+  event type. A tool without an entry falls back to "Using <tool>…".
+- **Developer view** is a header checkbox kept in localStorage, off by default, that opens
+  traces by default. Chosen over a URL flag or a server setting because it is per-person and
+  survives reloads without any backend state.
+- **Failures no longer force the trace open.** The error is already shown in the status
+  hint / answer card and as a badge in the trace summary; auto-opening would defeat "hidden
+  by default" for exactly the runs clinicians are most likely to notice.
+- **Consequence:** the per-call correct/incorrect/unsure buttons are inside the trace, so
+  they sit behind the toggle too. Moving them out would need a separate decision.
