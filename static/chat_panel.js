@@ -12,6 +12,11 @@ class ChatPanel {
       <h3 data-title>Chat</h3>
       <div data-picker></div>
       <div class="chips" data-chips style="display:none;"></div>
+      <div class="ctx" data-ctx style="display:none;">
+        <label><input type="checkbox" data-use-pos checked /> 📍 Use the player position
+          <b data-pos>0:00.0</b> as context</label>
+        <img data-pos-img alt="" />
+      </div>
       <textarea rows="3" data-question></textarea>
       <div class="send-row"><button data-send>Send message</button><small class="hint" data-status></small></div>
       <div data-thread></div>`;
@@ -22,6 +27,11 @@ class ChatPanel {
     this.sendBtn = q('[data-send]');
     this.statusEl = q('[data-status]');
     this.threadEl = q('[data-thread]');
+    this.ctxEl = q('[data-ctx]');
+    this.usePosEl = q('[data-use-pos]');
+    this.posEl = q('[data-pos]');
+    this.posImgEl = q('[data-pos-img]');
+    this.video = null;
     this.picker = new AgentPicker(q('[data-picker]'), {
       filter: a => a.kind !== 'steps', label: 'Answer with' });
 
@@ -46,6 +56,26 @@ class ChatPanel {
     this.showChips(false);
   }
 
+  // Tie the chat to the video player: shows where it is and sends that moment with each
+  // question. Pass null when there is no player.
+  setPlayer(video) {
+    this.video = video || null;
+    this.ctxEl.style.display = video ? '' : 'none';
+    if (!video) return;
+    let timer;
+    const label = () => { this.posEl.textContent = fmt(video.currentTime); };
+    const thumb = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        this.posImgEl.src = frameUrl({ time_sec: video.currentTime.toFixed(2) }, 120);
+      }, 200);
+    };
+    video.addEventListener('timeupdate', label);
+    ['seeked', 'pause'].forEach(ev => video.addEventListener(ev, () => { label(); thumb(); }));
+    label();
+    thumb();
+  }
+
   showChips(on) {
     this.chipsEl.style.display = on && this.suggestions.length ? '' : 'none';
     this.chipsEl.innerHTML = this.suggestions.map((s, i) =>
@@ -65,13 +95,18 @@ class ChatPanel {
       `<span class="badge">${esc(turn.model)}</span>`,
       `<span class="badge">${turn.latency_ms}ms</span>`,
       `<span class="badge">${turn.iterations} iteration(s)</span>`,
+      turn.confidence != null ? `<span class="badge">confidence ${confHTML(turn.confidence)}</span>` : '',
+      turn.player_time_sec != null
+        ? `<span class="badge">📍 asked at <a href="#" data-seek="${esc(turn.player_time_sec)}">${fmt(turn.player_time_sec)}</a></span>` : '',
       turn.needs_reply ? '<span class="badge warn">asked you a question — reply below</span>' : '',
     ].join('');
     return `<div class="response-card">
       <div class="q">Q${turn.turn_index}: ${esc(turn.question)}</div>
       <div class="meta">${badges} ${esc(turn.provider)}</div>
       ${turn.error ? `<div class="error">Error: ${esc(turn.error)}</div>` : ''}
-      ${turn.answer ? `<div class="answer">${esc(turn.answer)}</div>` : ''}
+      ${turn.answer ? `<div class="answer">${linkify(turn.answer)}</div>` : ''}
+      ${turn.uncertainty ? `<div class="uncertainty">? ${linkify(turn.uncertainty)}</div>` : ''}
+      ${(turn.evidence || []).length ? `<div class="evidence">${evidenceHTML(turn.evidence)}</div>` : ''}
       <div data-trace>${renderTrace(turn.trace, { turnIndex: turn.turn_index })}</div>
     </div>`;
   }
@@ -83,6 +118,7 @@ class ChatPanel {
     let body;
     try { body = { question, ...this.picker.request() }; }
     catch (err) { return alert(err.message); }
+    if (this.video && this.usePosEl.checked) body.player_time_sec = Number(this.video.currentTime.toFixed(2));
 
     this.threadEl.insertAdjacentHTML('beforeend', `<div class="response-card">
       <div class="q">${esc(question)}</div>

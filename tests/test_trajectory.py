@@ -94,5 +94,118 @@ class TrajectoryTests(Base):
         self.assertIn("s1:1:run", [c["call_id"] for c in calls])
 
 
+class AnswerEvidenceTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.upload()
+        self.query(agent="default")
+
+    def ask(self, **kw):
+        return self.query(agent="followup", question="What is happening here?", **kw)["turn"]
+
+    def test_answer_carries_confidence_uncertainty_and_evidence(self):
+        turn = self.ask()
+        self.assertIsNone(turn["error"])
+        self.assertEqual(turn["stop_reason"], "tool:submit_answer")
+        self.assertEqual(turn["confidence"], 0.6)
+        self.assertTrue(turn["uncertainty"])
+        self.assertEqual(len(turn["evidence"]), 1)
+        self.assertIn("[MOCK]", turn["answer"])
+
+    def test_player_position_reaches_the_agent_and_is_stored(self):
+        turn = self.ask(player_time_sec=2.5)
+        self.assertEqual(turn["player_time_sec"], 2.5)
+        self.assertEqual(turn["evidence"][0]["time_sec"], 2.5)
+        self.assertIn("around 2.5s", turn["answer"])
+
+    def test_player_position_is_clamped_to_the_clip(self):
+        self.assertEqual(self.ask(player_time_sec=999)["player_time_sec"], 4.0)
+        self.assertEqual(self.ask(player_time_sec=-3)["player_time_sec"], 0.0)
+
+    def test_no_player_position_means_none_stored(self):
+        self.assertNotIn("player_time_sec", self.ask())
+
+    def test_player_frame_is_attached_to_the_first_message(self):
+        from modalities.video import initial_messages
+        from core import registry
+        agent = registry.load_agents(registry.get_modality("video"))[0]["followup"]
+        ctx = ToolContext(session_id="s1", session={"turns": []},
+                          session_dir=f"{self.tmp.name}/s1")
+        with_pos = initial_messages(agent, ctx, {"question": "q", "player_time_sec": 1.0})[-1]
+        without = initial_messages(agent, ctx, {"question": "q"})[-1]
+        self.assertEqual(len(with_pos["images"]), 1)
+        self.assertIn("player is at 1.00s", with_pos["text"])
+        self.assertEqual(without["images"], [])
+
+    def test_steps_agent_ignores_player_position(self):
+        turn = self.query(agent="default", player_time_sec=1.0)["turn"]
+        self.assertNotIn("player_time_sec", turn)
+
+    def test_submit_answer_validation(self):
+        ctx = ToolContext(session_id="s1", session={}, session_dir=f"{self.tmp.name}/s1")
+        tool = get_tools("video")["submit_answer"]
+        ok = {"answer": "a", "confidence": 0.5, "evidence": [{"time_sec": 1, "note": "n"}]}
+        self.assertFalse(run_tool(tool, ctx, ok).is_error)
+        for bad in ({**ok, "confidence": 2}, {**ok, "answer": " "},
+                    {**ok, "evidence": [{"time_sec": 99, "note": ""}]}, {**ok, "evidence": 1}):
+            self.assertTrue(run_tool(tool, ctx, bad).is_error, bad)
+
+
+class EvidenceTableTests(Base):
+    def rows(self):
+        return self.client.get("/api/sessions/s1/evidence").json()["evidence"]
+
+    def test_steps_and_answers_are_flattened_into_the_table(self):
+        self.upload()
+        self.query(agent="default")
+        steps = self.rows()
+        self.assertEqual([r["source"] for r in steps], ["step"] * 3)
+        self.assertEqual([r["step_label"] for r in steps],
+                         ["Capsulorhexis", "Capsulorhexis", "Phacoemulsification"])
+        self.assertEqual(steps[0]["confidence"], 0.7)
+
+        self.query(agent="followup", question="q", player_time_sec=1.5)
+        answer = [r for r in self.rows() if r["source"] == "answer"]
+        self.assertEqual(len(answer), 1)
+        self.assertEqual((answer[0]["turn_index"], answer[0]["time_sec"]), (1, 1.5))
+
+    def test_evidence_joins_to_the_delivering_call_and_its_verdict(self):
+        self.upload()
+        self.query(agent="default")
+        calls = {c["call_id"]: c for c in
+                 self.client.get("/api/sessions/s1/trajectory").json()["calls"]}
+        row = self.rows()[0]
+        self.assertEqual(calls[row["call_id"]]["name"], "submit_steps")
+        self.client.post("/api/calls/mark", json={"call_id": row["call_id"], "verdict": "incorrect"})
+        import sqlite3
+        db = sqlite3.connect(self.tmp.name + "/trajectory.db")
+        n = db.execute("SELECT count(*) FROM evidence e JOIN calls c USING (call_id) "
+                       "WHERE c.reviewer_verdict = 'incorrect'").fetchone()[0]
+        self.assertEqual(n, 3)
+
+    def test_uncited_answer_keeps_its_confidence(self):
+        from core.trajectory import evidence_rows
+        turn = {"trace": [{"type": "tool_call", "name": "submit_answer", "seq": 3,
+                           "iteration": 1, "id": "x"}],
+                "confidence": 0.4, "uncertainty": "u", "evidence": []}
+        rows = evidence_rows("s", 0, turn)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["confidence"], rows[0]["time_sec"]), (0.4, None))
+
+    def test_a_rejected_submit_stores_nothing(self):
+        from core.trajectory import evidence_rows
+        trace = [{"type": "tool_call", "name": "submit_steps", "seq": 2, "iteration": 1, "id": "x"},
+                 {"type": "tool_result", "name": "submit_steps", "iteration": 1, "id": "x",
+                  "is_error": True}]
+        self.assertEqual(evidence_rows("s", 0, {"trace": trace, "model_steps": []}), [])
+
+    def test_rerecording_a_turn_replaces_its_rows(self):
+        from core.trajectory import record_turn
+        self.upload()
+        turn = self.query(agent="default")["turn"]
+        record_turn(self.tmp.name + "/trajectory.db", "s1", 0, turn)
+        self.assertEqual(len(self.rows()), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,39 @@ function fmt(s) {
   return `${m}:${r.padStart(4, '0')}`;
 }
 
+// Escapes text and turns moments in it (1:23, 1:23.5, 12.5s, 12.5–15s) into links that seek
+// the player. Plain escaped text when there is no player to seek.
+const TIME_RE = /\b(\d+(?:\.\d+)?)\s?[–-]\s?\d+(?:\.\d+)?\s?s\b|\b(\d{1,3}):([0-5]\d(?:\.\d+)?)\b|\b(\d+(?:\.\d+)?)\s?(?:s|sec|secs|seconds)\b/g;
+
+function linkify(text) {
+  text = String(text == null ? '' : text);
+  if (!$('clipVideo')) return esc(text);
+  let out = '', last = 0, m;
+  TIME_RE.lastIndex = 0;
+  while ((m = TIME_RE.exec(text))) {
+    const sec = m[1] !== undefined ? m[1] : m[2] !== undefined ? Number(m[2]) * 60 + Number(m[3]) : m[4];
+    out += esc(text.slice(last, m.index))
+      + `<a href="#" class="ts" data-seek="${esc(sec)}" title="jump the player here">${esc(m[0])}</a>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(text.slice(last));
+}
+
+function confHTML(c) {
+  if (typeof c !== 'number') return '—';
+  const level = c >= 0.75 ? 'high' : c >= 0.45 ? 'mid' : 'low';
+  return `<span class="conf ${level}">${Math.round(c * 100)}%</span>`;
+}
+
+// The frames a step or answer rests on: thumbnails that seek the player, with notes.
+function evidenceHTML(evidence) {
+  evidence = evidence || [];
+  if (!evidence.length) return '<small class="hint">none cited</small>';
+  return evidence.map(e => `<div class="ev">
+    <img loading="lazy" data-seek="${esc(e.time_sec)}" src="${esc(frameUrl({ time_sec: e.time_sec }, 120))}" title="click to seek the video" />
+    <span><a href="#" data-seek="${esc(e.time_sec)}">${fmt(e.time_sec)}</a><br><small class="hint">${linkify(e.note)}</small></span></div>`).join('');
+}
+
 async function postJSON(url, body) {
   const res = await fetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),

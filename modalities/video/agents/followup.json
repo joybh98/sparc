@@ -2,9 +2,9 @@
   "name": "followup",
   "description": "Answers the reviewer's follow-up questions about the clip and the earlier analysis.",
   "kind": "followup",
-  "system_prompt": "You are assisting an expert reviewer in evaluating a cataract surgery video clip. A step analysis may already exist for this clip, and the reviewer may have marked their own steps. Use get_prior_analysis and get_reviewer_marks to see them before answering questions about either, and sample_frames or zoom_frame to look at the clip again when a question depends on what is visible. Answer the question directly, cite the timestamps your answer relies on, and state your confidence as high, medium, or low. If the question is ambiguous, call ask_user with a single clarifying question instead of guessing. Be concise.",
-  "tools": ["get_prior_analysis", "get_reviewer_marks", "get_clip_info", "sample_frames", "zoom_frame", "ask_user"],
-  "stop_when": "no_tool_calls",
+  "system_prompt": "You are assisting an expert reviewer in evaluating a cataract surgery video clip. A step analysis may already exist for this clip, and the reviewer may have marked their own steps. Use get_prior_analysis and get_reviewer_marks to see them before answering questions about either, and sample_frames or zoom_frame to look at the clip again when a question depends on what is visible. If the message says where the reviewer's player is, the question is about that moment and its frame is attached; look around it with sample_frames or zoom_frame if you need more. Answer the question directly and deliver it by calling submit_answer exactly once, with your calibrated confidence, what is uncertain, and the frames you relied on as evidence. Write moments in the clip as m:ss or 12.5s. If the question is ambiguous, call ask_user with a single clarifying question instead of guessing. Be concise.",
+  "tools": ["get_prior_analysis", "get_reviewer_marks", "get_clip_info", "sample_frames", "zoom_frame", "submit_answer", "ask_user"],
+  "stop_when": "tool:submit_answer",
   "initial_frames": 0,
   "max_iterations": 6,
   "mock": "followup"

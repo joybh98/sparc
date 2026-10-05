@@ -5,7 +5,7 @@ from typing import Dict, List
 
 from core.registry import Modality
 from core.tools import ToolContext
-from frames import extract_frames_timed, video_info
+from frames import extract_frame_at, extract_frames_timed, video_info
 from modalities.video import tools  # noqa: F401  (registers the video tools)
 from modalities.video.mock import followup_script, steps_script
 from modalities.video.tools import video_path
@@ -48,9 +48,19 @@ def initial_messages(agent, ctx: ToolContext, params: Dict) -> List[Dict]:
     else:
         text = params.get("question", "")
         messages = _memory(ctx.session)
+    images = [f["b64"] for f in frames]
     if frames:
         text += "\n\n" + _frame_text(frames)
-    messages.append({"role": "user", "text": text, "images": [f["b64"] for f in frames]})
+    at = params.get("player_time_sec")
+    if agent.kind != "steps" and at is not None:
+        at = round(min(max(float(at), 0.0), duration), 2)
+        frame = extract_frame_at(video_path(ctx), at)
+        if frame:
+            ctx.state["player_time_sec"] = at
+            images.append(frame["b64"])
+            text += (f"\n\nThe reviewer's video player is at {at:.2f}s and the question is "
+                     f"about that moment. The frame at {at:.2f}s is attached.")
+    messages.append({"role": "user", "text": text, "images": images})
     return messages
 
 

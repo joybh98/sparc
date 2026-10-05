@@ -156,3 +156,24 @@ via `providers.py`. **Not implemented** — see `docs/NEXT_STEPS.md`.
   Marking is `POST /api/calls/mark`; it calls no model, so the single query endpoint stands.
 - **Not done:** evidence/confidence for follow-up answers (free text), and verdicts on a
   step's confidence or evidence individually (marks are per tool call).
+
+
+## 2026-10-05 — grounded answers: evidence on answers, clickable timestamps, player context
+
+- **Answers are structured.** The video `followup` agent now ends by calling `submit_answer`
+  (`answer`, `confidence`, `uncertainty`, `evidence`) instead of replying in free text, so
+  "the frames it relied on" is explicit rather than inferred from which frames it fetched.
+  It shares its validator and evidence shape with `submit_steps`. `turn.answer` still holds
+  the text, so chat memory and old sessions are unchanged. A model that skips the tool is
+  nudged once, then its text is used.
+- **Timestamps are linked client-side** (`linkify` in `common.js`), not by the server, so
+  nothing about stored answers changes. Accepted limitation: a bare duration such as "3 s"
+  also becomes a link.
+- **Player position is sent as `player_time_sec`** on `/api/query` (no new endpoint). The
+  video modality adds a line to the message and attaches that frame, rather than leaving the
+  model to fetch it, because the point is that "what's happening here?" works on the first
+  call. The UI shows what will be sent and lets the reviewer turn it off.
+- **Flat `evidence` table** in `trajectory.db` (one row per cited frame, plus a NULL-time row
+  when nothing is cited), joined to `calls` through the delivering call. Chosen over leaving
+  evidence only inside JSON columns so "evidence behind calls I marked incorrect" is a plain
+  join. Reviewer clicks and scrubs are deliberately not logged.

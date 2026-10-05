@@ -17,7 +17,8 @@ from pydantic import BaseModel
 from core import registry
 from core.loop import run_agent
 from core.tools import ToolContext, get_tools
-from core.trajectory import (VERDICTS, get_trajectory, mark_call, record_turn)
+from core.trajectory import (VERDICTS, get_evidence, get_trajectory, mark_call,
+                             record_turn)
 from frames import (extract_frame_at, extract_frames_b64, extract_frames_timed,
                     video_duration)
 from providers import available_models, query_model, query_steps
@@ -53,6 +54,7 @@ class QueryRequest(BaseModel):
     models: List[str] = []
     conversation_history: List[Dict] = []
     n_frames: int = 8
+    player_time_sec: Optional[float] = None     # where the reviewer's player is (video chat)
     # mode="agent": pick a saved agent by name, or pass a full config inline
     agent: Optional[str] = None
     agent_config: Optional[Dict] = None
@@ -249,7 +251,7 @@ def prepare_agent_run(req: QueryRequest) -> Dict:
         "ctx": ToolContext(session_id=req.session_id, session=session,
                            session_dir=os.path.join(SESSIONS_DIR, req.session_id)),
         "params": {"question": req.question, "step_hint": req.step_hint,
-                   "n_frames": req.n_frames},
+                   "n_frames": req.n_frames, "player_time_sec": req.player_time_sec},
     }
 
 
@@ -282,6 +284,11 @@ def execute_agent_run(prep: Dict, on_event=None) -> Dict:
         turn["question"] = prep["params"]["question"]
         turn["answer"] = result.output.get("text", "")
         turn["needs_reply"] = bool(result.output.get("needs_reply"))
+        for key in ("confidence", "uncertainty", "evidence"):
+            if key in result.output:
+                turn[key] = result.output[key]
+        if "player_time_sec" in ctx.state:
+            turn["player_time_sec"] = ctx.state["player_time_sec"]
 
     # Re-read under a lock: a chat turn and an analysis run can finish at the same time.
     with session_lock(ctx.session_id):
@@ -414,6 +421,11 @@ def api_mark_call(req: CallMarkRequest):
 @app.get("/api/sessions/{session_id}/trajectory")
 def api_trajectory(session_id: str):
     return {"session_id": session_id, "calls": get_trajectory(trajectory_db(), session_id)}
+
+
+@app.get("/api/sessions/{session_id}/evidence")
+def api_evidence(session_id: str):
+    return {"session_id": session_id, "evidence": get_evidence(trajectory_db(), session_id)}
 
 
 @app.get("/api/sessions/{session_id}")
