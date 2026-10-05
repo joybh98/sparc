@@ -19,6 +19,7 @@ const App = {
   // "Developer view" opens every reasoning trace by default. Clinicians get them collapsed.
   get devView() { try { return localStorage.getItem('sparc.devView') === '1'; } catch (e) { return false; } },
   set devView(on) { try { localStorage.setItem('sparc.devView', on ? '1' : '0'); } catch (e) { /* private mode */ } },
+  feedback: {},     // turn_index -> {rating, reason, correction} for answers flagged this page load
   verdicts: {},     // call_id -> reviewer verdict, for calls marked this page load
   modality(name) { return this.modalities.find(m => m.name === name); },
 };

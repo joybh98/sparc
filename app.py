@@ -15,10 +15,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core import registry
+from core import feedback
 from core.loop import run_agent
 from core.tools import ToolContext, get_tools
 from core.trajectory import (VERDICTS, get_evidence, get_trajectory, mark_call,
-                             record_turn)
+                             record_turn, set_correction)
 from frames import (extract_frame_at, extract_frames_b64, extract_frames_timed,
                     video_duration)
 from providers import available_models, query_model, query_steps
@@ -73,6 +74,14 @@ class CallMarkRequest(BaseModel):
     call_id: str
     verdict: Optional[str] = None
     note: Optional[str] = None
+
+
+class AnswerFeedbackRequest(BaseModel):
+    session_id: str
+    turn_index: int
+    rating: Optional[str] = None        # "up", "down", or null to clear the flag
+    reason: Optional[str] = None
+    correction: Optional[str] = None    # what the answer should have said (down only)
 
 
 def trajectory_db() -> str:
@@ -421,6 +430,53 @@ def api_mark_call(req: CallMarkRequest):
 @app.get("/api/sessions/{session_id}/trajectory")
 def api_trajectory(session_id: str):
     return {"session_id": session_id, "calls": get_trajectory(trajectory_db(), session_id)}
+
+
+@app.post("/api/answers/feedback")
+def api_answer_feedback(req: AnswerFeedbackRequest):
+    """Flag (or approve) one Q&A answer. Writes the verdict + reason to the trajectory store,
+    the correction to its own table, and the whole flag onto the turn in the session JSON."""
+    if req.rating is not None and req.rating not in feedback.RATINGS:
+        return {"error": "rating must be 'up', 'down' or null"}
+    reason = feedback.clean(req.reason, feedback.MAX_REASON)
+    correction = feedback.clean(req.correction, feedback.MAX_CORRECTION) \
+        if req.rating == "down" else None
+
+    with session_lock(req.session_id):
+        session = load_session(req.session_id)
+        turn = next((t for t in session["turns"] if t.get("turn_index") == req.turn_index), None)
+        if turn is None or turn.get("type") not in feedback.ANSWER_TYPES or not turn.get("answer"):
+            return {"error": "that turn is not an answer"}
+        cid = feedback.run_call_id(req.session_id, req.turn_index)
+        verdict = feedback.RATINGS.get(req.rating)
+        if not mark_call(trajectory_db(), cid, verdict, reason):
+            return {"error": "this answer was not recorded in the trajectory store"}
+        set_correction(trajectory_db(), cid, req.session_id, req.turn_index, correction)
+
+        if req.rating is None:
+            turn.pop("feedback", None)
+        else:
+            turn["feedback"] = {"rating": req.rating, "reason": reason, "correction": correction,
+                                "timestamp": datetime.now(timezone.utc).isoformat()}
+        save_session(session)
+    return {"ok": True, "feedback": turn.get("feedback")}
+
+
+@app.get("/api/preferences")
+def api_preferences(session_id: Optional[str] = None, format: str = "json"):
+    """Training examples derived from flagged answers: a chosen/rejected `pair` when the
+    reviewer wrote a correction, and a good/bad `label` for every flagged answer.
+    format=jsonl returns one example per line. Omit session_id for all sessions."""
+    if session_id:
+        sessions = [load_session(session_id)]
+    else:
+        sessions = [load_session(f[:-5]) for f in sorted(os.listdir(SESSIONS_DIR))
+                    if f.endswith(".json")]
+    examples = feedback.build_examples(sessions, trajectory_db())
+    if format == "jsonl":
+        return Response(content="".join(json.dumps(e) + "\n" for e in examples),
+                        media_type="application/x-ndjson")
+    return {"examples": examples}
 
 
 @app.get("/api/sessions/{session_id}/evidence")

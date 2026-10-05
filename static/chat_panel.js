@@ -35,6 +35,7 @@ class ChatPanel {
     this.picker = new AgentPicker(q('[data-picker]'), {
       filter: a => a.kind !== 'steps', label: 'Answer with' });
 
+    this.threadEl.addEventListener('click', e => this.onFeedbackClick(e));
     this.sendBtn.addEventListener('click', () => this.send());
     this.questionEl.addEventListener('keydown', e => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) this.send();
@@ -89,6 +90,60 @@ class ChatPanel {
     this.statusEl.textContent = on ? why : '';
   }
 
+  /* ---- flagging an answer: 👍 / 👎 with a short reason and an optional correction ---- */
+
+  feedbackHTML(n, editing = false) {
+    const fb = App.feedback[n] || null;
+    const btn = (kind, icon, tip) =>
+      `<button class="fb-btn ${kind}${fb && fb.rating === kind ? ' active' : ''}" data-fb="${kind}" title="${tip}">${icon}</button>`;
+    let note = '';
+    if (fb && fb.rating === 'down' && !editing) {
+      note = `<small class="hint">Flagged${fb.reason ? `: ${esc(fb.reason)}` : ''}${fb.correction ? ' · correction saved' : ''}
+        · <a href="#" data-fb-edit>edit</a></small>`;
+    } else if (fb && fb.rating === 'up') {
+      note = '<small class="hint">Marked as right</small>';
+    }
+    const form = editing ? `<div class="fb-form">
+      <input type="text" data-fb-reason maxlength="500" placeholder="What was wrong? (short reason)" value="${esc(fb && fb.reason || '')}" />
+      <textarea rows="2" data-fb-correction placeholder="What should it have said? (optional; saved as the preferred answer)">${esc(fb && fb.correction || '')}</textarea>
+      <div class="row"><button data-fb-save>Save flag</button><button class="secondary" data-fb-cancel>Cancel</button></div>
+    </div>` : '';
+    return `${btn('up', '👍', 'This answer was right')}${btn('down', '👎', 'Flag this answer as wrong')} ${note}${form}`;
+  }
+
+  async saveFeedback(box, rating, reason, correction) {
+    const n = Number(box.dataset.fbTurn);
+    const out = await postJSON('/api/answers/feedback', {
+      session_id: App.sessionId, turn_index: n, rating, reason: reason || null, correction: correction || null });
+    if (out.error) { alert(out.error); return; }
+    if (out.feedback) App.feedback[n] = out.feedback; else delete App.feedback[n];
+    box.innerHTML = this.feedbackHTML(n);
+  }
+
+  onFeedbackClick(e) {
+    const box = e.target.closest('.fb');
+    if (!box) return;
+    const n = Number(box.dataset.fbTurn);
+    const cur = App.feedback[n];
+    const act = e.target.closest('[data-fb], [data-fb-save], [data-fb-cancel], [data-fb-edit]');
+    if (!act) return;
+    e.preventDefault();
+
+    if (act.matches('[data-fb="up"]')) {
+      this.saveFeedback(box, cur && cur.rating === 'up' ? null : 'up');
+    } else if (act.matches('[data-fb="down"]')) {
+      if (cur && cur.rating === 'down') this.saveFeedback(box, null);
+      else box.innerHTML = this.feedbackHTML(n, true);
+    } else if (act.matches('[data-fb-edit]')) {
+      box.innerHTML = this.feedbackHTML(n, true);
+    } else if (act.matches('[data-fb-cancel]')) {
+      box.innerHTML = this.feedbackHTML(n);
+    } else if (act.matches('[data-fb-save]')) {
+      this.saveFeedback(box, 'down', box.querySelector('[data-fb-reason]').value.trim(),
+                        box.querySelector('[data-fb-correction]').value.trim());
+    }
+  }
+
   card(turn, traceOpen) {
     const badges = [
       `<span class="badge">${esc(turn.agent)}</span>`,
@@ -107,6 +162,8 @@ class ChatPanel {
       ${turn.answer ? `<div class="answer">${linkify(turn.answer)}</div>` : ''}
       ${turn.uncertainty ? `<div class="uncertainty">? ${linkify(turn.uncertainty)}</div>` : ''}
       ${(turn.evidence || []).length ? `<div class="evidence">${evidenceHTML(turn.evidence)}</div>` : ''}
+      ${turn.answer && !turn.error && turn.turn_index != null
+        ? `<div class="fb" data-fb-turn="${turn.turn_index}">${this.feedbackHTML(turn.turn_index)}</div>` : ''}
       <div data-trace>${renderTrace(turn.trace, { turnIndex: turn.turn_index, open: traceOpen })}</div>
     </div>`;
   }

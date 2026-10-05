@@ -78,6 +78,11 @@ uploaded to it.
    - **timestamps in the text are links**: `1:23`, `12.5s` and `12.5–15s` jump the player;
    - the chat **uses the player's position as context**: scrub to a moment and ask "what's
      happening here?"; that moment's frame is sent along with the question.
+5. **Flag an answer** (👍 / 👎 under each answer). 👎 opens a short form: a reason, and
+   optionally what the answer *should* have said. That one action feeds the same data as
+   step tagging, so Q&A is not a separate channel: a verdict and reason on the turn's row in
+   the trajectory store, a correction to the record, and a training example (see
+   [Flagging answers](#flagging-answers-and-preference-examples)).
 
 Chat from before the upload carries over into the video session.
 
@@ -147,6 +152,10 @@ Interactions worth knowing:
 - **Re-run analysis** takes an optional hint ("what you expect to see") and an agent
   picker. Editing the agent's JSON there runs the edited config inline.
 - Chat is blocked while an analysis is running.
+- **Flagging:** each answer card has 👍 / 👎. 👎 opens "What was wrong?" and an optional
+  "What should it have said?"; saving shows "Flagged: <reason>" with an edit link. Clicking
+  the active thumb clears the flag (and its correction). Cards in a session you have not
+  reloaded keep their state; the stored flag is the source of truth.
 - **Player position:** in a video session the chat shows a bar, "📍 Use the player position
   1:23 as context", with a thumbnail of that frame (updated when you pause or scrub). While
   it is ticked, each question is sent with the player's current time. Untick it to ask
@@ -278,6 +287,19 @@ Records your verdict on one recorded call: `{call_id, verdict, note?}`. `verdict
 `correct`, `incorrect`, `unsure`, or `null` to clear it. It does not call a model. Returns
 `{ok: true}`, or an error for an unknown `call_id` or invalid verdict.
 
+#### `POST /api/answers/feedback`
+Flags or approves one Q&A answer: `{session_id, turn_index, rating, reason?, correction?}`.
+`rating` is `"up"`, `"down"` or `null` (clear the flag). `reason` is capped at 500 characters
+and `correction` (kept only with `"down"`) at 4000; blank text is dropped. It records the
+verdict and reason on the turn's `run` row in `trajectory.db`, the correction in the
+`corrections` table, and a `feedback` object on the turn in the session JSON. Returns
+`{ok, feedback}`. Errors: the turn is not a Q&A answer, or it was recorded before the
+trajectory store existed. It calls no model.
+
+#### `GET /api/preferences?session_id=<id>&format=json|jsonl`
+Training examples derived from flagged answers (all sessions if `session_id` is omitted).
+See [Flagging answers](#flagging-answers-and-preference-examples) for the shape.
+
 #### `GET /api/sessions/{session_id}/trajectory`
 Every recorded call for the session, in order: `{session_id, calls: [...]}`. See
 [Trajectory and per-call marks](#trajectory-and-per-call-marks) for the row shape.
@@ -360,6 +382,50 @@ sqlite3 sessions/trajectory.db \
   "select name, reviewer_verdict, count(*) from calls where kind='tool' group by 1, 2"
 ```
 
+## Flagging answers and preference examples
+
+Flagging an answer (`POST /api/answers/feedback`) is the same kind of signal as marking a
+step, stored in the same places:
+
+| What | Where |
+| --- | --- |
+| 👍 / 👎 and the reason | `reviewer_verdict` (`correct` / `incorrect`) and `reviewer_note` on the turn's `run` row in `calls`. Existing queries over verdicts pick Q&A up automatically. |
+| What it should have said | `corrections` table (`call_id`, `session_id`, `turn_index`, `text`, `created_at`). |
+| The correction to the record | A `feedback` object on the turn in `sessions/<id>.json`; the original `answer` is kept untouched. |
+| The model's own memory | When the next question replays earlier Q&A as chat history, a flagged answer carries "[Reviewer feedback: this answer was flagged as incorrect. Reason: … The reviewer says the correct answer is: …]", in both video and text sessions, so it does not repeat the mistake. |
+
+**Preference examples are derived, never stored**: `GET /api/preferences` builds them from
+the verdicts and corrections on each call, so editing or clearing a flag changes the export.
+One example per flagged answer:
+
+```json
+{
+  "example_id": "<session>:3:run", "session_id": "...", "turn_index": 3,
+  "model": "...", "is_mock": false,
+  "prompt": {"question": "...", "history": [{"question": "...", "answer": "..."}],
+             "player_time_sec": 83.5},
+  "response": "<the model's answer>",
+  "model_confidence": 0.6, "model_evidence": [{"time_sec": 83.5, "note": "..."}],
+  "rating": "down", "label": false, "reason": "wrong step",
+  "correction": "<what it should have said, or null>",
+  "pair": {"chosen": "<the correction>", "rejected": "<the model's answer>"}
+}
+```
+
+- `label` is set on every example (`true` for 👍). Use it for good/bad training or filtering.
+- `pair` is set only for a 👎 **with a correction**; that is the chosen/rejected example.
+  A 👎 without a correction is a label-only example.
+- `is_mock` is true for scripted-mock answers; filter those out before training.
+- `model_confidence` is the model's own confidence on the answer, so you can compare it
+  with your verdict (a 👎 on a high-confidence answer is the interesting case).
+- The prompt records the clip by session and `player_time_sec`; the frame itself is not
+  copied, and can be re-rendered from the session video.
+- Only Q&A answers are exported. Step-analysis turns and per-tool-call marks are not.
+
+```bash
+curl -s "localhost:8000/api/preferences?format=jsonl" > preferences.jsonl
+```
+
 ## Agents, tools and modalities
 
 Everything is organized by **modality**: a session with an uploaded clip uses `video`,
@@ -391,7 +457,7 @@ All under `sessions/` (git-ignored):
 - `sessions/<id>.json`: the session: `video`, `turns` (each with its full trace), `marks`.
 - `sessions/<id>/video.mp4`: the uploaded clip.
 - `sessions/trajectory.db`: the queryable call trajectory (`calls`), the cited frames
-  (`evidence`) and your per-call verdicts.
+  (`evidence`), your per-call verdicts, and answer corrections (`corrections`).
 
 Sessions have no auth and no retention policy, so this is meant for local, single-user use.
 The session files double as a rough seed of gold labels.
@@ -407,7 +473,8 @@ core/
   llm.py                provider adapters (OpenAI, Anthropic, Google, Qwen) + mock plumbing
   registry.py           modality discovery, agent config loading and validation
   tools.py              @tool decorator, ToolContext, ToolResult
-  trajectory.py         SQLite trajectory store and per-call marks
+  trajectory.py         SQLite trajectory store, per-call marks, evidence, corrections
+  feedback.py           answer flags: replay note for the model, preference-example builder
 modalities/
   video/                __init__.py, tools.py, mock.py, agents/{default,followup}.json
   text/                 __init__.py, tools.py, mock.py, agents/chat.json

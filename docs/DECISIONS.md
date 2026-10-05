@@ -195,3 +195,23 @@ via `providers.py`. **Not implemented** — see `docs/NEXT_STEPS.md`.
   by default" for exactly the runs clinicians are most likely to notice.
 - **Consequence:** the per-call correct/incorrect/unsure buttons are inside the trace, so
   they sit behind the toggle too. Moving them out would need a separate decision.
+
+
+## 2026-10-07 — flagging Q&A answers feeds the same record as step tagging
+
+- **One channel.** A 👍/👎 on an answer is a verdict + reason on that turn's `run` row in
+  `trajectory.db`, the same `reviewer_verdict` / `reviewer_note` columns used for step tagging,
+  not a new store. The run row (not the `submit_answer` call) is the target because it exists
+  for every turn, including plain-text chat in the text modality, which has no answer tool.
+- **Correction** lives in its own small `corrections` table (one per answer) and is mirrored
+  as `turn.feedback` in the session JSON. The original `answer` is never overwritten, because
+  it is the "rejected" side of a preference pair.
+- **Preference examples are derived on read** (`core/feedback.py`), not stored, so they
+  cannot drift from the flag. A 👎 with a correction gives a chosen/rejected pair; every
+  flagged answer also gets a good/bad `label` (a bare 👎 has nothing to pair with).
+- **The model sees the flag.** Replayed history appends the reviewer's feedback to a flagged
+  answer, so the correction also repairs the live conversation. Chosen over a separate
+  "reviewer" message to keep user/assistant roles alternating for every provider.
+- **Scope:** Q&A answers only. Step turns and tool-call marks are not exported as preference
+  data; step-vs-reviewer-marks would be the natural next source.
+- **Mock data is flagged `is_mock`** in the export so it can be filtered before training.

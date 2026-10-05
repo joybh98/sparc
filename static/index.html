@@ -72,6 +72,13 @@
   .ctx img { height: 36px; border-radius: 4px; background: #000; }
   .ctx img:not([src]) { display: none; }
   a.ts { color: #2b4a9b; text-decoration: underline dotted; cursor: pointer; }
+  .fb { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .fb .fb-form { flex-basis: 100%; margin-top: 4px; }
+  .fb .fb-form input, .fb .fb-form textarea { margin-bottom: 6px; }
+  button.fb-btn { background: #eef0f4; color: #14213d; padding: 2px 9px; font-size: 14px; border-radius: 12px; }
+  button.fb-btn.active { color: #fff; }
+  button.fb-btn.active.up { background: #1c6b3a; }
+  button.fb-btn.active.down { background: #b03a2e; }
   .evidence { margin-top: 6px; }
   .conf { font-weight: 600; }
   .conf.high { color: #1c6b3a; }

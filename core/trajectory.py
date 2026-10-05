@@ -46,6 +46,13 @@ CREATE TABLE IF NOT EXISTS evidence (
     time_sec REAL,
     note TEXT
 );
+CREATE TABLE IF NOT EXISTS corrections (
+    call_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    turn_index INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_evidence_call ON evidence(call_id);
 CREATE INDEX IF NOT EXISTS idx_calls_session ON calls(session_id, turn_index, seq);
 """
@@ -182,6 +189,35 @@ def mark_call(db_path: str, cid: str, verdict: Optional[str], note: Optional[str
             (verdict, note if verdict else None,
              datetime.now(timezone.utc).isoformat() if verdict else None, cid))
         return cur.rowcount > 0
+
+
+def set_correction(db_path: str, cid: str, session_id: str, turn_index: int,
+                   text: Optional[str]) -> None:
+    """What the reviewer says the answer should have been. Empty text removes it."""
+    with _connect(db_path) as conn:
+        if text:
+            conn.execute("INSERT OR REPLACE INTO corrections (call_id, session_id, turn_index, "
+                         "text, created_at) VALUES (?,?,?,?,?)",
+                         (cid, session_id, turn_index, text,
+                          datetime.now(timezone.utc).isoformat()))
+        else:
+            conn.execute("DELETE FROM corrections WHERE call_id = ?", (cid,))
+
+
+def get_corrections(db_path: str, session_id: str) -> Dict[str, str]:
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT call_id, text FROM corrections WHERE session_id = ?",
+                            (session_id,)).fetchall()
+    return {r["call_id"]: r["text"] for r in rows}
+
+
+def get_run_marks(db_path: str, session_id: str) -> List[Dict]:
+    """Run rows (one per turn) the reviewer has given a verdict."""
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT call_id, turn_index, reviewer_verdict, reviewer_note, "
+                            "marked_at FROM calls WHERE session_id = ? AND kind = 'run' "
+                            "AND reviewer_verdict IS NOT NULL", (session_id,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_evidence(db_path: str, session_id: str) -> List[Dict]:

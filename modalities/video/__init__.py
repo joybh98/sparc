@@ -3,6 +3,7 @@ as tool-using agent loops over sampled frames."""
 import os
 from typing import Dict, List
 
+from core.feedback import memory_note
 from core.registry import Modality
 from core.tools import ToolContext
 from frames import extract_frame_at, extract_frames_timed, video_info
@@ -27,7 +28,8 @@ def _memory(session: Dict) -> List[Dict]:
         if turn.get("type") in ("followup", "chat") and turn.get("answer") \
                 and not turn.get("error"):
             out.append({"role": "user", "text": turn.get("question", "")})
-            out.append({"role": "assistant", "text": turn["answer"], "tool_calls": []})
+            out.append({"role": "assistant", "text": turn["answer"] + memory_note(turn),
+                        "tool_calls": []})
     return out[-2 * MEMORY_TURNS:]
 
 
