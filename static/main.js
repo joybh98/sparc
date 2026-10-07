@@ -30,6 +30,8 @@ App.uploadVideo = async function (fileInput, hintEl, button) {
 };
 
 (async function boot() {
+  $('devView').checked = App.devView;
+  $('devView').addEventListener('change', e => { App.devView = e.target.checked; });
   await loadModels();
   const data = await (await fetch('/api/agents')).json();
   App.modalities = data.modalities;

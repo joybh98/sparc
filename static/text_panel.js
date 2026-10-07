@@ -19,6 +19,7 @@ const TextPanel = {
       title: 'Chat',
       placeholder: 'Ask anything. Upload a clip above to have it analyzed.',
     });
+    chat.setPlayer(null);
     chat.setBlocked(false);
     $('uploadBtn').addEventListener('click', () => App.uploadVideo($('videoFile'), $('uploadHint'), $('uploadBtn')));
   },

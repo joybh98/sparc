@@ -17,6 +17,26 @@ def _duration(ctx: ToolContext) -> float:
     return video_info(video_path(ctx)).get("duration_sec", 0.0)
 
 
+def _num(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _confidence_evidence_problems(who: str, conf, ev, duration: float) -> List[str]:
+    problems = []
+    if not _num(conf) or not 0 <= conf <= 1:
+        problems.append(f"{who} needs a confidence between 0 and 1")
+    if not isinstance(ev, list):
+        problems.append(f"{who} needs an evidence list (may be empty)")
+    elif any(not isinstance(e, dict) or not _num(e.get("time_sec"))
+             or not 0 <= e["time_sec"] <= duration + 0.01 for e in ev):
+        problems.append(f"{who} evidence needs time_sec within [0, {duration}]")
+    return problems
+
+
+def _clean_evidence(ev: List[Dict]) -> List[Dict]:
+    return [{"time_sec": e["time_sec"], "note": str(e.get("note") or "")} for e in ev]
+
+
 def _fmt_steps(steps: List[Dict]) -> str:
     return "\n".join(f"- {s.get('step_label', '?')}: {s.get('start_sec')}s–{s.get('end_sec')}s"
                      f" — {s.get('comment', '')}" for s in steps)
@@ -120,30 +140,47 @@ def submit_steps(ctx, steps, assessment):
         if a < prev_start:
             problems.append(f"step {i} starts before the previous step")
         prev_start = a
-        conf = s.get("confidence")
-        if not isinstance(conf, (int, float)) or isinstance(conf, bool) or not 0 <= conf <= 1:
-            problems.append(f"step {i} needs a confidence between 0 and 1")
-        ev = s.get("evidence")
-        if not isinstance(ev, list):
-            problems.append(f"step {i} needs an evidence list (may be empty)")
-        else:
-            for e in ev:
-                t = e.get("time_sec") if isinstance(e, dict) else None
-                if not isinstance(t, (int, float)) or isinstance(t, bool) \
-                        or not 0 <= t <= duration + 0.01:
-                    problems.append(f"step {i} evidence needs time_sec within [0, {duration}]")
-                    break
+        problems += _confidence_evidence_problems(
+            f"step {i}", s.get("confidence"), s.get("evidence"), duration)
     if not steps:
         problems.append("steps is empty")
     if problems:
         return ToolResult(text="Rejected: " + "; ".join(problems) + ". Fix and call again.",
                           is_error=True)
     steps = [{**s, "uncertainty": str(s.get("uncertainty") or ""),
-              "evidence": [{"time_sec": e["time_sec"], "note": str(e.get("note") or "")}
-                           for e in s["evidence"]]} for s in steps]
+              "evidence": _clean_evidence(s["evidence"])} for s in steps]
     return ToolResult(text=f"Submitted {len(steps)} steps.",
                       data={"steps": steps, "assessment": assessment},
                       ui={"steps": steps})
+
+
+@tool("video", "submit_answer",
+      "Deliver your final answer to the reviewer's question. Call this once, after looking at "
+      "whatever you need. Cite the frames your answer rests on as evidence.",
+      {"type": "object", "required": ["answer", "confidence", "evidence"], "properties": {
+          "answer": {"type": "string", "description":
+                     "The answer. Write moments in the clip as m:ss or 12.5s so they can be "
+                     "clicked to seek the player."},
+          "confidence": {"type": "number", "description":
+                         "Probability 0-1 that the answer is right."},
+          "uncertainty": {"type": "string", "description":
+                          "What is unclear, or what would resolve it. Empty if nothing."},
+          "evidence": {"type": "array", "description": "Frames that support the answer.",
+                       "items": {"type": "object", "required": ["time_sec", "note"],
+                                 "properties": {"time_sec": {"type": "number"},
+                                                "note": {"type": "string", "description":
+                                                         "What is visible there."}}}}}})
+def submit_answer(ctx, answer, confidence, evidence, uncertainty=""):
+    problems = _confidence_evidence_problems("answer", confidence, evidence, _duration(ctx))
+    if not isinstance(answer, str) or not answer.strip():
+        problems.append("answer must be non-empty text")
+    if problems:
+        return ToolResult(text="Rejected: " + "; ".join(problems) + ". Fix and call again.",
+                          is_error=True)
+    return ToolResult(
+        text=answer,
+        data={"text": answer, "confidence": confidence,
+              "uncertainty": str(uncertainty or ""), "evidence": _clean_evidence(evidence)})
 
 
 @tool("video", "get_prior_analysis",

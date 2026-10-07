@@ -156,3 +156,62 @@ via `providers.py`. **Not implemented** — see `docs/NEXT_STEPS.md`.
   Marking is `POST /api/calls/mark`; it calls no model, so the single query endpoint stands.
 - **Not done:** evidence/confidence for follow-up answers (free text), and verdicts on a
   step's confidence or evidence individually (marks are per tool call).
+
+
+## 2026-10-05 — grounded answers: evidence on answers, clickable timestamps, player context
+
+- **Answers are structured.** The video `followup` agent now ends by calling `submit_answer`
+  (`answer`, `confidence`, `uncertainty`, `evidence`) instead of replying in free text, so
+  "the frames it relied on" is explicit rather than inferred from which frames it fetched.
+  It shares its validator and evidence shape with `submit_steps`. `turn.answer` still holds
+  the text, so chat memory and old sessions are unchanged. A model that skips the tool is
+  nudged once, then its text is used.
+- **Timestamps are linked client-side** (`linkify` in `common.js`), not by the server, so
+  nothing about stored answers changes. Accepted limitation: a bare duration such as "3 s"
+  also becomes a link.
+- **Player position is sent as `player_time_sec`** on `/api/query` (no new endpoint). The
+  video modality adds a line to the message and attaches that frame, rather than leaving the
+  model to fetch it, because the point is that "what's happening here?" works on the first
+  call. The UI shows what will be sent and lets the reviewer turn it off.
+- **Flat `evidence` table** in `trajectory.db` (one row per cited frame, plus a NULL-time row
+  when nothing is cited), joined to `calls` through the delivering call. Chosen over leaving
+  evidence only inside JSON columns so "evidence behind calls I marked incorrect" is a plain
+  join. Reviewer clicks and scrubs are deliberately not logged.
+
+
+## 2026-10-06 — reasoning trace hidden by default, plain-language status while running
+
+- **Front end only.** The server still records the full trace and the trajectory store is
+  unchanged; this is about what clinicians see first. Nothing is dropped.
+- **Collapsed behind "Inspect reasoning"**, with a one-line status while the run is live
+  (`statusFor()` / `TOOL_STATUS` in `common.js`, e.g. "Looking at frames 220–280s…"). The
+  status is derived client-side from the latest trace event, so it needs no new endpoint or
+  event type. A tool without an entry falls back to "Using <tool>…".
+- **Developer view** is a header checkbox kept in localStorage, off by default, that opens
+  traces by default. Chosen over a URL flag or a server setting because it is per-person and
+  survives reloads without any backend state.
+- **Failures no longer force the trace open.** The error is already shown in the status
+  hint / answer card and as a badge in the trace summary; auto-opening would defeat "hidden
+  by default" for exactly the runs clinicians are most likely to notice.
+- **Consequence:** the per-call correct/incorrect/unsure buttons are inside the trace, so
+  they sit behind the toggle too. Moving them out would need a separate decision.
+
+
+## 2026-10-07 — flagging Q&A answers feeds the same record as step tagging
+
+- **One channel.** A 👍/👎 on an answer is a verdict + reason on that turn's `run` row in
+  `trajectory.db`, the same `reviewer_verdict` / `reviewer_note` columns used for step tagging,
+  not a new store. The run row (not the `submit_answer` call) is the target because it exists
+  for every turn, including plain-text chat in the text modality, which has no answer tool.
+- **Correction** lives in its own small `corrections` table (one per answer) and is mirrored
+  as `turn.feedback` in the session JSON. The original `answer` is never overwritten, because
+  it is the "rejected" side of a preference pair.
+- **Preference examples are derived on read** (`core/feedback.py`), not stored, so they
+  cannot drift from the flag. A 👎 with a correction gives a chosen/rejected pair; every
+  flagged answer also gets a good/bad `label` (a bare 👎 has nothing to pair with).
+- **The model sees the flag.** Replayed history appends the reviewer's feedback to a flagged
+  answer, so the correction also repairs the live conversation. Chosen over a separate
+  "reviewer" message to keep user/assistant roles alternating for every provider.
+- **Scope:** Q&A answers only. Step turns and tool-call marks are not exported as preference
+  data; step-vs-reviewer-marks would be the natural next source.
+- **Mock data is flagged `is_mock`** in the export so it can be filtered before training.

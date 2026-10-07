@@ -72,7 +72,17 @@ uploaded to it.
      unsure buttons.
 4. **Talk to the model** about its analysis. A follow-up agent can re-read the earlier
    analysis, your marks and the chat so far, and look at the clip again on demand. It may
-   ask you a clarifying question instead of guessing.
+   ask you a clarifying question instead of guessing. Its answers are **grounded**:
+   - each answer shows a confidence, what is uncertain, and the **evidence frames** it
+     rests on (thumbnails that seek the player);
+   - **timestamps in the text are links**: `1:23`, `12.5s` and `12.5–15s` jump the player;
+   - the chat **uses the player's position as context**: scrub to a moment and ask "what's
+     happening here?"; that moment's frame is sent along with the question.
+5. **Flag an answer** (👍 / 👎 under each answer). 👎 opens a short form: a reason, and
+   optionally what the answer *should* have said. That one action feeds the same data as
+   step tagging, so Q&A is not a separate channel: a verdict and reason on the turn's row in
+   the trajectory store, a correction to the record, and a training example (see
+   [Flagging answers](#flagging-answers-and-preference-examples)).
 
 Chat from before the upload carries over into the video session.
 
@@ -84,8 +94,8 @@ load in this order, and each owns one concern:
 | File | Role |
 | --- | --- |
 | `index.html` | Page shell and CSS: a header with the model selector, and an empty `<main id="root">` that the panels fill. |
-| `common.js` | Shared helpers (`$`, `esc`, `fmt`, `postJSON`), the global `App` state (session id, modalities, call verdicts), the **trace renderer**, the per-call **mark buttons**, the **agent picker**, and `runAgent()`, the streaming run client. Knows nothing about a specific modality. |
-| `chat_panel.js` | `ChatPanel`: the chat thread, question box, agent picker, suggestion chips. The same panel is reused in both text and video sessions. |
+| `common.js` | Shared helpers (`$`, `esc`, `fmt`, `postJSON`), `linkify()` (timestamps in text become seek links), `confHTML()` and `evidenceHTML()` (confidence and evidence thumbnails, used by both the step table and chat answers), the global `App` state (session id, modalities, call verdicts), the **trace renderer** (collapsed by default, with a live status line via `statusFor()`), the per-call **mark buttons**, the **agent picker**, and `runAgent()`, the streaming run client. Knows nothing about a specific modality. |
+| `chat_panel.js` | `ChatPanel`: the chat thread, question box, agent picker, suggestion chips, and the player-position bar (`setPlayer()`). The same panel is reused in both text and video sessions. |
 | `text_panel.js` | `TextPanel`: the screen before upload: an upload box above the chat. |
 | `video_panel.js` | `VideoPanel`: the screen after upload (layout below). |
 | `main.js` | Boot: loads the models and `/api/agents`, mounts `TextPanel`, and handles the upload that switches to `VideoPanel`. |
@@ -117,19 +127,39 @@ load in this order, and each owns one concern:
 │                       │ Model steps vs. your steps (IoU)     │
 │                       ├──────────────────────────────────────┤
 │                       │ Talk to the model (ChatPanel)        │
+│                       │  📍 Use player position 1:23 [frame] │
+│                       │  answers: confidence · evidence ·    │
+│                       │   clickable timestamps               │
 └───────────────────────┴──────────────────────────────────────┘
 ```
 
 Interactions worth knowing:
 
 - Any frame thumbnail or evidence entry is clickable and **seeks the player**.
-- The trace is collapsible. It shows each model call, each tool call with its arguments,
-  result and latency, and thumbnails of the frames the agent fetched.
-- **Mark buttons appear on a trace once the turn is saved**, not while it is still
-  running. Clicking the active verdict clears it.
+- **The reasoning trace is hidden by default.** While the agent works you see one plain
+  line instead ("Looking at frames 220–280s…", "Zooming in on the frame at 41s…", "Writing
+  up the step timeline…"). When it finishes there is just an **Inspect reasoning**
+  toggle. Open it to see each model call, each tool call with its arguments, result and
+  latency, and thumbnails of the frames the agent fetched. Your open/closed choice survives
+  the live updates.
+- **Developer view:** tick "Developer view: expand reasoning" in the header to open every
+  trace by default. It is remembered in the browser (localStorage) and off by default.
+  Status wording lives in `TOOL_STATUS` in `common.js`; a new tool needs one line there
+  (otherwise it shows "Using <tool>…").
+- **Mark buttons live inside the trace**, so open "Inspect reasoning" to use them. They
+  appear once the turn is saved, not while it is still running. Clicking the active
+  verdict clears it.
 - **Re-run analysis** takes an optional hint ("what you expect to see") and an agent
   picker. Editing the agent's JSON there runs the edited config inline.
 - Chat is blocked while an analysis is running.
+- **Flagging:** each answer card has 👍 / 👎. 👎 opens "What was wrong?" and an optional
+  "What should it have said?"; saving shows "Flagged: <reason>" with an edit link. Clicking
+  the active thumb clears the flag (and its correction). Cards in a session you have not
+  reloaded keep their state; the stored flag is the source of truth.
+- **Player position:** in a video session the chat shows a bar, "📍 Use the player position
+  1:23 as context", with a thumbnail of that frame (updated when you pause or scrub). While
+  it is ticked, each question is sent with the player's current time. Untick it to ask
+  without that context.
 
 ## How a run works
 
@@ -215,6 +245,7 @@ The single endpoint that calls a model.
 | `step_hint` | Steps agents only: what the reviewer expects to see. |
 | `models` | `["gpt"]`: the first entry is the model. Falls back to the agent's own `model`, then `gpt`. |
 | `n_frames` | Frames sampled up front (default 8, capped at 32). |
+| `player_time_sec` | Optional. Where the reviewer's player is, in seconds. For video Q&A agents the server clamps it to the clip, adds "the player is at X s" to the message and attaches that frame. Ignored by steps agents and text sessions. Saved on the turn. |
 | `stream` | `true` returns `{session_id, run_id}` immediately; poll `/api/runs/<id>`. `false` blocks and returns `{session_id, turn}`. |
 
 A **turn** looks like (abridged):
@@ -235,7 +266,9 @@ A **turn** looks like (abridged):
 `type` is `steps` for a steps agent (fills `model_steps` and `assessment`) or
 `followup` / `chat` for Q&A (fills `question`, `answer`, `needs_reply`, and `parent_turn`,
 the index of the analysis it follows). `needs_reply: true` means the model asked you a
-clarifying question.
+clarifying question. A video follow-up that finished with `submit_answer` also carries
+`confidence`, `uncertainty` and `evidence` (same shape as for steps), and
+`player_time_sec` if one was sent.
 
 #### `GET /api/runs/{run_id}?after=<seq>`
 Polls a streaming run. Returns `{status, error, turn, events}` where `events` are the trace
@@ -254,9 +287,27 @@ Records your verdict on one recorded call: `{call_id, verdict, note?}`. `verdict
 `correct`, `incorrect`, `unsure`, or `null` to clear it. It does not call a model. Returns
 `{ok: true}`, or an error for an unknown `call_id` or invalid verdict.
 
+#### `POST /api/answers/feedback`
+Flags or approves one Q&A answer: `{session_id, turn_index, rating, reason?, correction?}`.
+`rating` is `"up"`, `"down"` or `null` (clear the flag). `reason` is capped at 500 characters
+and `correction` (kept only with `"down"`) at 4000; blank text is dropped. It records the
+verdict and reason on the turn's `run` row in `trajectory.db`, the correction in the
+`corrections` table, and a `feedback` object on the turn in the session JSON. Returns
+`{ok, feedback}`. Errors: the turn is not a Q&A answer, or it was recorded before the
+trajectory store existed. It calls no model.
+
+#### `GET /api/preferences?session_id=<id>&format=json|jsonl`
+Training examples derived from flagged answers (all sessions if `session_id` is omitted).
+See [Flagging answers](#flagging-answers-and-preference-examples) for the shape.
+
 #### `GET /api/sessions/{session_id}/trajectory`
 Every recorded call for the session, in order: `{session_id, calls: [...]}`. See
 [Trajectory and per-call marks](#trajectory-and-per-call-marks) for the row shape.
+
+#### `GET /api/sessions/{session_id}/evidence`
+Every cited frame for the session: `{session_id, evidence: [...]}`, one row per frame with
+its source (`step` or `answer`), confidence, uncertainty and the `call_id` of the call that
+delivered it.
 
 ## Evidence, confidence, uncertainty
 
@@ -272,6 +323,12 @@ Each step the analysis agent submits through `submit_steps` carries:
 is invalid, it returns an error to the agent, which has to fix it and call again. In the UI,
 confidence is colored (≥75% green, ≥45% amber, otherwise red), uncertainty is shown under
 the comment, and each evidence entry is a thumbnail that seeks the player.
+
+Follow-up answers have the same three fields: the video `followup` agent delivers its answer
+through `submit_answer` (`answer`, `confidence`, `evidence`, optional `uncertainty`), which
+is validated the same way. The answer card shows them under the text. If a model replies
+without calling the tool it is nudged once, then its plain text is used (no confidence or
+evidence).
 
 ## Trajectory and per-call marks
 
@@ -291,15 +348,82 @@ Rows form a tree: **run → model call → tool call**.
 | `args_json`, `result_text`, `result_json`, `is_error` | What was sent and what came back. |
 | `reviewer_verdict`, `reviewer_note`, `marked_at` | Your mark, if any. |
 
+### Evidence table
+
+`evidence` holds one row per cited frame, so confidence and evidence are plain columns
+rather than JSON inside a call. A step or answer that cites nothing still gets one row with
+`time_sec` NULL, so its confidence is kept. Rows are written when a turn is recorded, and
+only for a successful `submit_steps` / `submit_answer`.
+
+| Column | Meaning |
+| --- | --- |
+| `call_id` | The `submit_steps` / `submit_answer` call that delivered it; joins to `calls`, so a verdict you gave that call applies to its evidence. |
+| `session_id`, `turn_index` | Where it came from. |
+| `source` | `step` or `answer`. |
+| `step_index`, `step_label` | Which step (NULL for an answer). |
+| `confidence`, `uncertainty` | The model's own, for that step or answer. |
+| `time_sec`, `note` | The cited frame and what is visible in it. |
+
+The run row in `calls` also records the `question` and `player_time_sec` it was asked with.
+
 Example queries:
 
 ```bash
 # everything as CSV
 sqlite3 -header -csv sessions/trajectory.db "select * from calls" > calls.csv
 
+# every frame cited for calls you marked incorrect
+sqlite3 -header sessions/trajectory.db \
+  "select e.turn_index, e.source, e.step_label, e.confidence, e.time_sec, e.note
+   from evidence e join calls c using (call_id) where c.reviewer_verdict = 'incorrect'"
+
 # which tools the model called, and how you judged them
 sqlite3 sessions/trajectory.db \
   "select name, reviewer_verdict, count(*) from calls where kind='tool' group by 1, 2"
+```
+
+## Flagging answers and preference examples
+
+Flagging an answer (`POST /api/answers/feedback`) is the same kind of signal as marking a
+step, stored in the same places:
+
+| What | Where |
+| --- | --- |
+| 👍 / 👎 and the reason | `reviewer_verdict` (`correct` / `incorrect`) and `reviewer_note` on the turn's `run` row in `calls`. Existing queries over verdicts pick Q&A up automatically. |
+| What it should have said | `corrections` table (`call_id`, `session_id`, `turn_index`, `text`, `created_at`). |
+| The correction to the record | A `feedback` object on the turn in `sessions/<id>.json`; the original `answer` is kept untouched. |
+| The model's own memory | When the next question replays earlier Q&A as chat history, a flagged answer carries "[Reviewer feedback: this answer was flagged as incorrect. Reason: … The reviewer says the correct answer is: …]", in both video and text sessions, so it does not repeat the mistake. |
+
+**Preference examples are derived, never stored**: `GET /api/preferences` builds them from
+the verdicts and corrections on each call, so editing or clearing a flag changes the export.
+One example per flagged answer:
+
+```json
+{
+  "example_id": "<session>:3:run", "session_id": "...", "turn_index": 3,
+  "model": "...", "is_mock": false,
+  "prompt": {"question": "...", "history": [{"question": "...", "answer": "..."}],
+             "player_time_sec": 83.5},
+  "response": "<the model's answer>",
+  "model_confidence": 0.6, "model_evidence": [{"time_sec": 83.5, "note": "..."}],
+  "rating": "down", "label": false, "reason": "wrong step",
+  "correction": "<what it should have said, or null>",
+  "pair": {"chosen": "<the correction>", "rejected": "<the model's answer>"}
+}
+```
+
+- `label` is set on every example (`true` for 👍). Use it for good/bad training or filtering.
+- `pair` is set only for a 👎 **with a correction**; that is the chosen/rejected example.
+  A 👎 without a correction is a label-only example.
+- `is_mock` is true for scripted-mock answers; filter those out before training.
+- `model_confidence` is the model's own confidence on the answer, so you can compare it
+  with your verdict (a 👎 on a high-confidence answer is the interesting case).
+- The prompt records the clip by session and `player_time_sec`; the frame itself is not
+  copied, and can be re-rendered from the session video.
+- Only Q&A answers are exported. Step-analysis turns and per-tool-call marks are not.
+
+```bash
+curl -s "localhost:8000/api/preferences?format=jsonl" > preferences.jsonl
 ```
 
 ## Agents, tools and modalities
@@ -315,7 +439,7 @@ otherwise `text`.
   by `GET /api/agents` under `invalid`.
 - **Built in:** video has `default` (step analysis) and `followup` (Q&A); text has `chat`.
 - **Video tools:** `get_clip_info`, `sample_frames`, `zoom_frame`, `submit_steps`,
-  `get_prior_analysis`, `get_reviewer_marks`, `ask_user`. **Text tools:** `search_history`,
+  `submit_answer`, `get_prior_analysis`, `get_reviewer_marks`, `ask_user`. **Text tools:** `search_history`,
   `calculate`, `ask_user`.
 - **Add a tool:** one decorated function in `modalities/<modality>/tools.py`:
   `@tool("video", "name", "description", {json schema})`, returning a `ToolResult`. Configs
@@ -332,7 +456,8 @@ All under `sessions/` (git-ignored):
 
 - `sessions/<id>.json`: the session: `video`, `turns` (each with its full trace), `marks`.
 - `sessions/<id>/video.mp4`: the uploaded clip.
-- `sessions/trajectory.db`: the queryable call trajectory and your per-call verdicts.
+- `sessions/trajectory.db`: the queryable call trajectory (`calls`), the cited frames
+  (`evidence`), your per-call verdicts, and answer corrections (`corrections`).
 
 Sessions have no auth and no retention policy, so this is meant for local, single-user use.
 The session files double as a rough seed of gold labels.
@@ -348,7 +473,8 @@ core/
   llm.py                provider adapters (OpenAI, Anthropic, Google, Qwen) + mock plumbing
   registry.py           modality discovery, agent config loading and validation
   tools.py              @tool decorator, ToolContext, ToolResult
-  trajectory.py         SQLite trajectory store and per-call marks
+  trajectory.py         SQLite trajectory store, per-call marks, evidence, corrections
+  feedback.py           answer flags: replay note for the model, preference-example builder
 modalities/
   video/                __init__.py, tools.py, mock.py, agents/{default,followup}.json
   text/                 __init__.py, tools.py, mock.py, agents/chat.json

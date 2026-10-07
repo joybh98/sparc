@@ -16,6 +16,10 @@ def _duration(messages: List[Dict]) -> float:
     return 30.0
 
 
+def question_text(messages: List[Dict]) -> str:
+    return next((m["text"] for m in reversed(messages) if m["role"] == "user"), "")
+
+
 def _run_plan(plan, tools, messages, final):
     names = {t["name"] for t in tools}
     plan = [(n, text, args) for n, text, args in plan if n in names]
@@ -61,7 +65,7 @@ def steps_script(agent, messages, tools) -> LLMReply:
 
 
 def followup_script(agent, messages, tools) -> LLMReply:
-    question = next((m["text"] for m in reversed(messages) if m["role"] == "user"), "")
+    question = question_text(messages).split("\n\n")[0]
     q = question.lower()
     dur = _duration(messages)
     plan = [("get_prior_analysis", "[MOCK] Let me re-read the earlier analysis.", {})]
@@ -74,7 +78,19 @@ def followup_script(agent, messages, tools) -> LLMReply:
     def final(names):
         seen = [r["text"].splitlines()[0] for m in messages if m["role"] == "tool"
                 for r in m["results"]]
-        return LLMReply(text=f"[MOCK] On '{question}': based on {len(seen)} tool result(s), "
-                             f"my earlier read still holds. Confidence: medium.")
+        at = re.search(r"player is at ([0-9.]+)s", question_text(messages))
+        prior = next((r["text"] for m in messages if m["role"] == "tool"
+                      for r in m["results"] if "Step timeline" in r["text"]), "")
+        found = re.search(r"\u2013([0-9.]+)s", prior)
+        moment = float(at.group(1)) if at else float(found.group(1)) if found else 0.0
+        text = (f"[MOCK] On '{question}': based on {len(seen)} tool result(s), my earlier "
+                f"read still holds around {moment:.1f}s. Confidence: medium.")
+        if "submit_answer" not in names:
+            return LLMReply(text=text)
+        return LLMReply(text="[MOCK] I can answer now.", tool_calls=[ToolCall(
+            "mock_answer", "submit_answer", {
+                "answer": text, "confidence": 0.6,
+                "uncertainty": "[MOCK] Sparse frames; the exact boundary is not visible.",
+                "evidence": [{"time_sec": moment, "note": "[MOCK] The frame this answer rests on."}]})])
 
     return _run_plan(plan, tools, messages, final)

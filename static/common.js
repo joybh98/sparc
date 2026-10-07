@@ -16,6 +16,10 @@ function newId() {
 const App = {
   sessionId: newId(),
   modalities: [],
+  // "Developer view" opens every reasoning trace by default. Clinicians get them collapsed.
+  get devView() { try { return localStorage.getItem('sparc.devView') === '1'; } catch (e) { return false; } },
+  set devView(on) { try { localStorage.setItem('sparc.devView', on ? '1' : '0'); } catch (e) { /* private mode */ } },
+  feedback: {},     // turn_index -> {rating, reason, correction} for answers flagged this page load
   verdicts: {},     // call_id -> reviewer verdict, for calls marked this page load
   modality(name) { return this.modalities.find(m => m.name === name); },
 };
@@ -30,6 +34,39 @@ function fmt(s) {
   const m = Math.floor(s / 60);
   const r = (s % 60).toFixed(1);
   return `${m}:${r.padStart(4, '0')}`;
+}
+
+// Escapes text and turns moments in it (1:23, 1:23.5, 12.5s, 12.5–15s) into links that seek
+// the player. Plain escaped text when there is no player to seek.
+const TIME_RE = /\b(\d+(?:\.\d+)?)\s?[–-]\s?\d+(?:\.\d+)?\s?s\b|\b(\d{1,3}):([0-5]\d(?:\.\d+)?)\b|\b(\d+(?:\.\d+)?)\s?(?:s|sec|secs|seconds)\b/g;
+
+function linkify(text) {
+  text = String(text == null ? '' : text);
+  if (!$('clipVideo')) return esc(text);
+  let out = '', last = 0, m;
+  TIME_RE.lastIndex = 0;
+  while ((m = TIME_RE.exec(text))) {
+    const sec = m[1] !== undefined ? m[1] : m[2] !== undefined ? Number(m[2]) * 60 + Number(m[3]) : m[4];
+    out += esc(text.slice(last, m.index))
+      + `<a href="#" class="ts" data-seek="${esc(sec)}" title="jump the player here">${esc(m[0])}</a>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(text.slice(last));
+}
+
+function confHTML(c) {
+  if (typeof c !== 'number') return '—';
+  const level = c >= 0.75 ? 'high' : c >= 0.45 ? 'mid' : 'low';
+  return `<span class="conf ${level}">${Math.round(c * 100)}%</span>`;
+}
+
+// The frames a step or answer rests on: thumbnails that seek the player, with notes.
+function evidenceHTML(evidence) {
+  evidence = evidence || [];
+  if (!evidence.length) return '<small class="hint">none cited</small>';
+  return evidence.map(e => `<div class="ev">
+    <img loading="lazy" data-seek="${esc(e.time_sec)}" src="${esc(frameUrl({ time_sec: e.time_sec }, 120))}" title="click to seek the video" />
+    <span><a href="#" data-seek="${esc(e.time_sec)}">${fmt(e.time_sec)}</a><br><small class="hint">${linkify(e.note)}</small></span></div>`).join('');
 }
 
 async function postJSON(url, body) {
@@ -92,8 +129,41 @@ function renderTool(call, result, live, markId) {
   </div>`;
 }
 
+const roundSec = x => Math.round(Number(x) || 0);
+
+// What the agent is doing, in words a clinician can read. Keyed by tool name; a tool
+// without an entry falls back to a generic line.
+const TOOL_STATUS = {
+  get_clip_info: () => 'Checking the clip details…',
+  sample_frames: a => `Looking at frames ${roundSec(a.start_sec)}–${roundSec(a.end_sec)}s…`,
+  zoom_frame: a => `Zooming in on the frame at ${roundSec(a.time_sec)}s…`,
+  submit_steps: () => 'Writing up the step timeline…',
+  submit_answer: () => 'Writing up the answer…',
+  get_prior_analysis: () => 'Re-reading the earlier analysis…',
+  get_reviewer_marks: () => 'Checking your marked steps…',
+  ask_user: () => 'Preparing a question for you…',
+  search_history: () => 'Searching the conversation…',
+  calculate: () => 'Calculating…',
+};
+
+// One short line describing the latest thing the agent did, from the events so far.
+function statusFor(trace) {
+  const last = (trace || []).filter(e => e.type !== 'final').pop();
+  if (!last) return 'Starting…';
+  if (last.type === 'tool_call') {
+    const f = TOOL_STATUS[last.name];
+    return f ? f(last.args || {}) : `Using ${last.name}…`;
+  }
+  if (last.type === 'nudge') return 'Finishing up…';
+  if (last.type === 'error') return 'Something went wrong…';
+  if (last.type === 'model_call' && !last.n_tool_calls) return 'Writing up the result…';
+  return 'Thinking…';
+}
+
 // opts: {open: bool, live: bool, turnIndex: int}. `live` = the run is still going (partial
-// trace). `turnIndex` (set once the turn is saved) turns on per-call marking.
+// trace). `turnIndex` (set once the turn is saved) turns on per-call marking. The trace is
+// collapsed unless `open` is set or the developer view is on; while live, a one-line status
+// shows instead.
 function renderTrace(trace, opts = {}) {
   trace = trace || [];
   const iters = new Map();   // iteration -> {model, calls: [{call, result}], notes: []}
@@ -116,8 +186,8 @@ function renderTrace(trace, opts = {}) {
   const nCalls = trace.filter(e => e.type === 'tool_call').length;
   const failed = final && final.error;
   const summary = live
-    ? `Trace · ${nCalls} tool call(s) so far · running…`
-    : `Trace · ${final ? final.iterations : iters.size} iteration(s) · ${nCalls} tool call(s)`
+    ? `Inspect reasoning · ${nCalls} tool call(s) so far`
+    : `Inspect reasoning · ${final ? final.iterations : iters.size} iteration(s) · ${nCalls} tool call(s)`
       + (final ? ` · ${(final.latency_ms / 1000).toFixed(1)}s · stop: ${final.stop_reason}` : '');
 
   const body = [...iters.entries()].map(([n, it]) => {
@@ -132,9 +202,10 @@ function renderTrace(trace, opts = {}) {
     </div>`;
   }).join('');
 
-  const open = opts.open || failed;
-  return `<details class="trace"${open ? ' open' : ''}>
-    <summary>${live ? '<span class="spin"></span>' : ''}${esc(summary)}${failed ? ` <span class="badge err">${esc(failed)}</span>` : ''}</summary>
+  const open = opts.open != null ? opts.open : App.devView;
+  const status = live ? `<div class="trace-status"><span class="spin"></span>${esc(statusFor(trace))}</div>` : '';
+  return `${status}<details class="trace"${open ? ' open' : ''}>
+    <summary>${esc(summary)}${failed ? ` <span class="badge err">${esc(failed)}</span>` : ''}</summary>
     <div class="trace-body">${body || '<small class="hint">Waiting for the model…</small>'}
       ${live ? '<div class="note">⏳ working…</div>' : ''}</div>
   </details>`;
@@ -142,8 +213,14 @@ function renderTrace(trace, opts = {}) {
 
 // Re-render a trace into a container, keeping whatever open/closed state the user chose.
 function setTrace(host, trace, opts = {}) {
+  host.innerHTML = renderTrace(trace, { ...opts, open: traceOpen(host, opts.open) });
+}
+
+// Whether the trace in `host` is open right now (undefined if it has none yet), so a
+// re-render, or a card rebuilt from the saved turn, keeps the reviewer's choice.
+function traceOpen(host, fallback) {
   const prev = host.querySelector('details.trace');
-  host.innerHTML = renderTrace(trace, { ...opts, open: prev ? prev.open : opts.open });
+  return prev ? prev.open : fallback;
 }
 
 // reviewer verdict on one call; clicking the active verdict clears it

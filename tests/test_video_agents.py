@@ -124,7 +124,8 @@ class ApiTests(Base):
         self.assertEqual(first["type"], "followup")
         self.assertEqual(first["parent_turn"], 0)
         called = [e["name"] for e in first["trace"] if e["type"] == "tool_call"]
-        self.assertEqual(called, ["get_prior_analysis", "get_reviewer_marks", "zoom_frame"])
+        self.assertEqual(called, ["get_prior_analysis", "get_reviewer_marks", "zoom_frame",
+                                  "submit_answer"])
         prior = next(e for e in first["trace"]
                      if e["type"] == "tool_result" and e["name"] == "get_prior_analysis")
         self.assertIn("Capsulorhexis", prior["text"])
@@ -134,7 +135,7 @@ class ApiTests(Base):
         self.assertEqual(second["turn_index"], 2)
         # replayed memory must not make the mock skip its tool calls
         self.assertEqual([e["name"] for e in second["trace"] if e["type"] == "tool_call"],
-                         ["get_prior_analysis"])
+                         ["get_prior_analysis", "submit_answer"])
         # memory: the first follow-up's Q&A is replayed into the second run's context
         agents, _ = registry.load_agents(registry.get_modality("video"))
         session = app_module.load_session("s1")
